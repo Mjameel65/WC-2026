@@ -17,11 +17,10 @@ def render(user: dict):
 
     st.title("Admin Panel")
 
-    tab_results, tab_verify, tab_users, tab_startup = st.tabs([
+    tab_results, tab_verify, tab_users = st.tabs([
         "Match Results",
         f"Verify Users{pending_badge}",
         "All Users",
-        "Startup Points",
     ])
 
     # ── Tab 1: Match Results ──────────────────────────────────────────────────
@@ -30,16 +29,6 @@ def render(user: dict):
         done     = [m for m in matches if m["status"] == "completed"]
         locked   = [m for m in matches if m["locked"] and m["status"] != "completed"]
         upcoming = [m for m in matches if not m["locked"]]
-
-        # ── Overdue alert ────────────────────────────────────────────────────
-        if locked:
-            st.warning(f"⚠️ {len(locked)} match{'es' if len(locked)>1 else ''} overdue — result not entered yet:")
-            for m in locked:
-                st.markdown(
-                    f"&nbsp;&nbsp;🔴 **{m['home_flag']} {m['home']} vs {m['away']} {m['away_flag']}** "
-                    f"· Group {m['group']} · {format_kickoff(m['kickoff_utc'], tz_offset)}"
-                )
-            st.markdown("---")
 
         st.subheader("Enter / Update Result")
         st.caption("Select any match that has kicked off and enter the final score.")
@@ -219,36 +208,3 @@ def render(user: dict):
                 set_user_role(target_u["id"], new_role)
                 st.success(f"{target_name} is now **{new_role}**")
                 st.rerun()
-
-    # ── Tab 4: Startup Points ─────────────────────────────────────────────────
-    with tab_startup:
-        st.subheader("Startup Points")
-        st.caption(
-            "For users who registered after matches were already played, "
-            "set a one-time points bonus so they can compete from the next match onwards."
-        )
-
-        completed_matches = [m for m in get_matches() if m["status"] == "completed"]
-        st.info(f"**{len(completed_matches)} matches** have been played so far. "
-                f"Max possible points from those: **{len(completed_matches) * 3} pts** (3 per match).")
-
-        all_users  = get_all_users()
-        board      = {r["username"]: r for r in get_leaderboard()}
-
-        for u in all_users:
-            lb            = board.get(u["username"], {})
-            startup_pts   = lb.get("startup_points", 0)
-            match_pts     = lb.get("match_points", 0)
-
-            with st.expander(f"{u['username']}  —  {match_pts} match pts + {startup_pts} startup pts = **{match_pts + startup_pts} total**"):
-                new_pts = st.number_input(
-                    "Startup points",
-                    min_value=0, max_value=500,
-                    value=startup_pts,
-                    key=f"sp_{u['id']}",
-                    help="Points added to this user's leaderboard total (one-time bonus)."
-                )
-                if st.button("Save", key=f"sp_save_{u['id']}", use_container_width=True):
-                    set_user_startup_points(u["id"], int(new_pts))
-                    st.success(f"Startup points for {u['username']} set to {int(new_pts)}")
-                    st.rerun()
