@@ -1,0 +1,115 @@
+import streamlit as st
+from db import get_matches, get_all_users, get_all_predictions, calc_points
+from tz import format_kickoff
+
+
+def render(user: dict):
+    tz_offset = user.get("tz_offset") or 3
+
+    st.title("Users Predictions")
+    st.caption("All users' predictions — read only.")
+
+    matches  = get_matches()
+    users    = [u["username"] for u in get_all_users()]
+    all_pred = get_all_predictions()
+
+    if not matches:
+        st.info("No matches found.")
+        return
+
+    # ── Group filter ──────────────────────────────────────────────────────────
+    groups   = sorted({m["group"] for m in matches})
+    tab_labels = ["All"] + groups
+    tabs     = st.tabs(tab_labels)
+
+    for tab, grp_label in zip(tabs, tab_labels):
+        with tab:
+            grp_matches = matches if grp_label == "All" else [m for m in matches if m["group"] == grp_label]
+
+            for m in grp_matches:
+                preds     = all_pred.get(m["id"], {})
+                is_locked = m["locked"]
+                is_done   = m["status"] == "completed"
+
+                # ── Match header ──────────────────────────────────────────────
+                if is_done:
+                    status_badge = '<span class="badge badge-completed">FT</span>'
+                    card_class   = "completed"
+                elif is_locked:
+                    status_badge = '<span class="badge" style="background:#8B0000;color:#fff;">LIVE</span>'
+                    card_class   = "live"
+                else:
+                    status_badge = '<span class="badge" style="background:#1d3557;color:#fff;">upcoming</span>'
+                    card_class   = ""
+
+                score_str = (f"{m['score_home']} – {m['score_away']}"
+                             if is_done else "vs")
+
+                st.markdown(f"""
+                <div class="match-card {card_class}" style="margin-bottom:.3rem;">
+                    <div class="match-teams">
+                        <span>{m['home_flag']} {m['home']}</span>
+                        <span class="match-score">{score_str}</span>
+                        <span>{m['away']} {m['away_flag']}</span>
+                    </div>
+                    <div class="match-meta">
+                        Group {m['group']} &nbsp;|&nbsp;
+                        {format_kickoff(m['kickoff_utc'], tz_offset)} &nbsp;|&nbsp;
+                        {m['venue']} &nbsp;{status_badge}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # ── Predictions grid ──────────────────────────────────────────
+                if not users:
+                    st.caption("No users yet.")
+                    continue
+
+                cols = st.columns(len(users))
+                for col, uname in zip(cols, users):
+                    pred  = preds.get(uname)
+                    short = uname.split()[1] if len(uname.split()) > 1 else uname
+                    is_me = uname == user["username"]
+
+                    if pred is None:
+                        col.markdown(f"""
+                        <div style='background:#111;border-radius:8px;padding:.5rem .6rem;
+                                    border:1px solid #2a2a2a;text-align:center;margin-bottom:.5rem;'>
+                            <div style='font-size:.68rem;color:#888;font-weight:600;
+                                        {'color:#C8A951;' if is_me else ''}'>{short}</div>
+                            <div style='font-size:.95rem;color:#444;margin:.25rem 0;'>– –</div>
+                            <div style='font-size:.65rem;color:#444;'>No pick</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        ph, pa = pred
+                        if is_done:
+                            pts = calc_points(ph, pa, m["score_home"], m["score_away"])
+                            if pts == 3:
+                                bg, border, pt_color, label = "#1a1500", "#C8A951", "#C8A951", "Exact ✓"
+                            elif pts == 1:
+                                bg, border, pt_color, label = "#0a1a10", "#2d9e6b", "#2d9e6b", "Winner ✓"
+                            else:
+                                bg, border, pt_color, label = "#111",    "#333",    "#666",    "Wrong ✗"
+                            pts_html = f"<div style='font-size:1.1rem;font-weight:900;color:{pt_color};'>+{pts}</div>"
+                            label_html = f"<div style='font-size:.62rem;color:{pt_color};font-weight:600;'>{label}</div>"
+                        else:
+                            bg, border, pt_color = "#111", "#444", "#aaa"
+                            pts_html   = ""
+                            label_html = "<div style='font-size:.62rem;color:#555;'>Pending</div>"
+
+                        me_border = f"2px solid #C8A951" if is_me else f"1px solid {border}"
+                        col.markdown(f"""
+                        <div style='background:{bg};border-radius:8px;padding:.5rem .6rem;
+                                    border:{me_border};text-align:center;margin-bottom:.5rem;'>
+                            <div style='font-size:.68rem;font-weight:600;
+                                        color:{"#C8A951" if is_me else "#aaa"};'>{short}</div>
+                            <div style='font-size:1.05rem;font-weight:700;color:#fff;margin:.2rem 0;'>
+                                {ph} – {pa}
+                            </div>
+                            {label_html}
+                            {pts_html}
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                st.markdown("<div style='margin-bottom:.8rem'></div>", unsafe_allow_html=True)

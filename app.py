@@ -19,6 +19,7 @@ import pages.scores      as pg_scores
 import pages.leaderboard as pg_leaderboard
 import pages.admin       as pg_admin
 import pages.profile     as pg_profile
+import pages.dashboard   as pg_dashboard
 
 inject_css()
 
@@ -197,6 +198,7 @@ NAV = {
     "Groups":      "🏆",
     "Results":     "📋",
     "Predict":     "🎯",
+    "Users Predictions": "👁️",
     "Scores":      "🏅",
     "Leaderboard": "📊",
 }
@@ -244,6 +246,7 @@ if not st.session_state.get("show_profile", False):
     elif p == "Groups":      pg_groups.render(user)
     elif p == "Results":     pg_results.render(user)
     elif p == "Predict":     pg_predict.render(user)
+    elif p == "Users Predictions": pg_dashboard.render(user)
     elif p == "Scores":      pg_scores.render(user)
     elif p == "Leaderboard": pg_leaderboard.render(user)
     elif p == "Admin":       pg_admin.render(user)

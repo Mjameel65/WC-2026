@@ -459,6 +459,20 @@ def get_user_predictions(user_id):
     return {r["match_id"]: (r["pred_home"], r["pred_away"]) for r in rows}
 
 
+def get_all_predictions():
+    """Returns {match_id: {username: (pred_home, pred_away)}} for all matches."""
+    with _db() as c:
+        c.execute("""
+            SELECT p.match_id, u.username, p.pred_home, p.pred_away
+            FROM predictions p JOIN users u ON u.id = p.user_id
+        """)
+        rows = c.fetchall()
+    result = {}
+    for r in rows:
+        result.setdefault(r["match_id"], {})[r["username"]] = (r["pred_home"], r["pred_away"])
+    return result
+
+
 def get_all_predictions_for_match(match_id):
     with _db() as c:
         c.execute("""
