@@ -75,16 +75,17 @@ def init_schema():
         """)
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id            SERIAL PRIMARY KEY,
-                username      TEXT UNIQUE NOT NULL,
-                email         TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                role          TEXT NOT NULL DEFAULT 'user',
-                verified      INTEGER NOT NULL DEFAULT 0,
-                favorite_team TEXT DEFAULT '',
-                tz_name       TEXT DEFAULT 'Jordan (UTC+3)',
-                tz_offset     INTEGER DEFAULT 3,
-                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id             SERIAL PRIMARY KEY,
+                username       TEXT UNIQUE NOT NULL,
+                email          TEXT UNIQUE NOT NULL,
+                password_hash  TEXT NOT NULL,
+                role           TEXT NOT NULL DEFAULT 'user',
+                verified       INTEGER NOT NULL DEFAULT 0,
+                favorite_team  TEXT DEFAULT '',
+                tz_name        TEXT DEFAULT 'Jordan (UTC+3)',
+                tz_offset      INTEGER DEFAULT 3,
+                startup_points INTEGER NOT NULL DEFAULT 0,
+                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         c.execute("""
@@ -104,6 +105,10 @@ def init_schema():
                 submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, match_id)
             )
+        """)
+        # migration: add startup_points if missing
+        c.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS startup_points INTEGER NOT NULL DEFAULT 0
         """)
 
 
@@ -493,7 +498,7 @@ def get_leaderboard():
     completed = {m["id"]: m for m in matches if m["status"] == "completed"}
 
     with _db() as c:
-        c.execute("SELECT id, username, favorite_team FROM users ORDER BY username")
+        c.execute("SELECT id, username, favorite_team, startup_points FROM users ORDER BY username")
         users = c.fetchall()
         c.execute("SELECT user_id,match_id,pred_home,pred_away FROM predictions")
         all_pred = c.fetchall()
@@ -504,7 +509,8 @@ def get_leaderboard():
 
     rows = []
     for u in users:
-        preds = upreds.get(u["id"], [])
+        preds   = upreds.get(u["id"], [])
+        startup = u["startup_points"] or 0
         pts = exact = winner = wrong = 0
         for p in preds:
             m = completed.get(p["match_id"])
@@ -518,17 +524,24 @@ def get_leaderboard():
             1 for p in preds if p["match_id"] in completed
         )
         rows.append({
-            "username":   u["username"],
-            "fav_team":   u["favorite_team"] or "",
-            "points":     pts,
-            "exact":      exact,
-            "winner":     winner,
-            "wrong":      wrong,
-            "no_pred":    no_pred_on_done,
-            "total_pred": len(preds),
+            "username":       u["username"],
+            "fav_team":       u["favorite_team"] or "",
+            "points":         pts + startup,
+            "match_points":   pts,
+            "startup_points": startup,
+            "exact":          exact,
+            "winner":         winner,
+            "wrong":          wrong,
+            "no_pred":        no_pred_on_done,
+            "total_pred":     len(preds),
         })
     rows.sort(key=lambda x: (-x["points"], -x["exact"], -x["winner"]))
     return rows
+
+
+def set_user_startup_points(user_id: int, points: int):
+    with _db() as c:
+        c.execute("UPDATE users SET startup_points=%s WHERE id=%s", (points, user_id))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
