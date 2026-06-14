@@ -1,0 +1,91 @@
+import streamlit as st
+from datetime import datetime, timezone
+from data import MATCHES, TEAMS
+
+
+def _today_str():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _match_card(m: dict):
+    status = m["status"]
+    badge = {
+        "live":      '<span class="badge badge-live">&#9679; LIVE</span>',
+        "completed": '<span class="badge badge-completed">FT</span>',
+        "upcoming":  '<span class="badge badge-upcoming">Upcoming</span>',
+    }.get(status, "")
+
+    if status == "completed":
+        score = f"{m['score_home']} – {m['score_away']}"
+    elif status == "live":
+        score = "LIVE"
+    else:
+        score = m["kickoff_utc"].replace("T", " ") + " UTC"
+
+    date_str = m["kickoff_utc"][:10]
+
+    st.markdown(f"""
+    <div class="match-card {status}">
+        <div class="match-teams">
+            <span>{m['home_flag']} {m['home']}</span>
+            <span class="match-score">{score}</span>
+            <span>{m['away']} {m['away_flag']}</span>
+        </div>
+        <div class="match-meta">
+            Group {m['group']} &nbsp;|&nbsp; {date_str} &nbsp;|&nbsp;
+            {m['venue']} &nbsp;{badge}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render(user: dict):
+    st.markdown("""
+    <div class="hero">
+        <h1>&#x26BD; FIFA World Cup 2026</h1>
+        <p>USA &bull; Canada &bull; Mexico &nbsp;|&nbsp; June 11 – July 19, 2026</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    today_str = _today_str()
+    today_matches = [m for m in MATCHES if m["kickoff_utc"].startswith(today_str)]
+    recent = [m for m in MATCHES if m["status"] == "completed"]
+    upcoming = [m for m in MATCHES if m["status"] == "upcoming"][:6]
+
+    fav = user.get("favorite_team", "")
+    if fav:
+        fav_matches = [
+            m for m in MATCHES
+            if fav in (m["home"], m["away"]) and m["status"] in ("live", "upcoming")
+        ]
+        if fav_matches:
+            flag = TEAMS.get(fav, {}).get("flag", "")
+            nxt = fav_matches[0]
+            opponent = nxt["away"] if nxt["home"] == fav else nxt["home"]
+            st.info(f"**{flag} {fav}** — next match: {nxt['kickoff_utc'][:10]} vs **{opponent}**")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Teams", "48")
+        st.metric("Matches Played", str(len(recent)))
+    with col2:
+        st.metric("Matches Remaining", str(len([m for m in MATCHES if m["status"] != "completed"])))
+        st.metric("Host Countries", "3")
+
+    st.markdown("---")
+
+    if today_matches:
+        st.subheader(f"Today's Matches — {today_str}")
+        for m in today_matches:
+            _match_card(m)
+
+    st.subheader("Recent Results")
+    if recent:
+        for m in reversed(recent[-6:]):
+            _match_card(m)
+    else:
+        st.caption("No completed matches yet.")
+
+    st.subheader("Upcoming Matches")
+    for m in upcoming:
+        _match_card(m)

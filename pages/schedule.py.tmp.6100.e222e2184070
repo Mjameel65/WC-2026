@@ -1,0 +1,72 @@
+import streamlit as st
+from data import MATCHES, ALL_TEAMS_LIST
+
+
+def _match_card(m: dict):
+    status = m["status"]
+    badge = {
+        "live":      '<span class="badge badge-live">&#9679; LIVE</span>',
+        "completed": '<span class="badge badge-completed">FT</span>',
+        "upcoming":  '<span class="badge badge-upcoming">Upcoming</span>',
+    }.get(status, "")
+
+    score = (
+        f"{m['score_home']} – {m['score_away']}" if status == "completed"
+        else ("LIVE" if status == "live" else m["kickoff_utc"].replace("T", " ") + " UTC")
+    )
+
+    st.markdown(f"""
+    <div class="match-card {status}">
+        <div class="match-teams">
+            <span>{m['home_flag']} {m['home']}</span>
+            <span class="match-score">{score}</span>
+            <span>{m['away']} {m['away_flag']}</span>
+        </div>
+        <div class="match-meta">
+            Group {m['group']} &nbsp;|&nbsp; {m['kickoff_utc'][:10]} &nbsp;|&nbsp;
+            {m['venue']} &nbsp;{badge}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render(user: dict):
+    st.title("Match Schedule")
+
+    # ── Filters ───────────────────────────────────────────────────────────
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        status_filter = st.selectbox(
+            "Status", ["All", "Upcoming", "Live", "Completed"], index=0
+        )
+    with col2:
+        group_filter = st.selectbox(
+            "Group", ["All"] + list("ABCDEFGHIJKL"), index=0
+        )
+    with col3:
+        team_filter = st.selectbox(
+            "Team", ["All"] + ALL_TEAMS_LIST, index=0
+        )
+
+    # ── Apply filters ─────────────────────────────────────────────────────
+    filtered = MATCHES[:]
+    if status_filter != "All":
+        filtered = [m for m in filtered if m["status"] == status_filter.lower()]
+    if group_filter != "All":
+        filtered = [m for m in filtered if m["group"] == group_filter]
+    if team_filter != "All":
+        filtered = [m for m in filtered if team_filter in (m["home"], m["away"])]
+
+    st.caption(f"Showing {len(filtered)} match(es)")
+
+    if not filtered:
+        st.info("No matches match your filters.")
+        return
+
+    # Group by date
+    dates = sorted(set(m["kickoff_utc"][:10] for m in filtered))
+    for d in dates:
+        day_matches = [m for m in filtered if m["kickoff_utc"].startswith(d)]
+        st.markdown(f"### {d}")
+        for m in day_matches:
+            _match_card(m)

@@ -1,0 +1,82 @@
+import streamlit as st
+from data import MATCHES, TEAMS, GROUPS, STANDINGS
+from tz import format_kickoff
+
+
+def render(user: dict):
+    tz_offset = user.get("tz_offset", 3)
+
+    st.title("Results")
+    st.caption(f"Official match results · Times in **{user.get('tz_name','Jordan (UTC+3)')}**")
+
+    completed = [m for m in MATCHES if m["status"] == "completed"]
+    if not completed:
+        st.info("No completed matches yet. Check back after kick-off!")
+        return
+
+    # ── Summary bar ───────────────────────────────────────────────────────────
+    total_goals = sum(m["score_home"] + m["score_away"] for m in completed)
+    avg_goals   = total_goals / len(completed) if completed else 0
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Matches Played", len(completed))
+    col2.metric("Total Goals", total_goals)
+    col3.metric("Avg Goals/Match", f"{avg_goals:.1f}")
+
+    st.markdown("---")
+
+    # ── Group-by-group results ────────────────────────────────────────────────
+    for grp in "ABCDEFGHIJKL":
+        grp_done = [m for m in completed if m["group"] == grp]
+        if not grp_done:
+            continue
+
+        st.markdown(f'<div class="group-header">Group {grp}</div>', unsafe_allow_html=True)
+
+        # Standing mini-table for this group
+        teams_in_grp = sorted(
+            [t for t, info in STANDINGS.items() if info["group"] == grp],
+            key=lambda t: (-STANDINGS[t]["Pts"], -STANDINGS[t]["GD"], -STANDINGS[t]["GF"]),
+        )
+        html = "<table><thead><tr><th>#</th><th style='text-align:left'>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead><tbody>"
+        for i, t in enumerate(teams_in_grp, 1):
+            s = STANDINGS[t]
+            hl = " qualify" if i <= 2 else ""
+            html += (
+                f"<tr class='{hl}'><td>{i}</td>"
+                f"<td style='text-align:left'>{s['flag']} {t}</td>"
+                f"<td>{s['P']}</td><td>{s['W']}</td><td>{s['D']}</td><td>{s['L']}</td>"
+                f"<td>{s['GF']}</td><td>{s['GA']}</td><td>{s['GD']}</td>"
+                f"<td><b>{s['Pts']}</b></td></tr>"
+            )
+        html += "</tbody></table>"
+        st.markdown(html, unsafe_allow_html=True)
+
+        st.markdown("<div style='margin-top:0.6rem;'></div>", unsafe_allow_html=True)
+
+        for m in grp_done:
+            winner = ""
+            if m["score_home"] > m["score_away"]:
+                winner = m["home"]
+            elif m["score_away"] > m["score_home"]:
+                winner = m["away"]
+
+            result_class = ""
+            if winner:
+                result_class = "border-left: 4px solid #C8A951 !important;"
+
+            st.markdown(f"""
+            <div class="match-card completed" style="{result_class}">
+                <div class="match-teams">
+                    <span style="{'font-weight:900;color:#C8A951;' if winner==m['home'] else ''}">{m['home_flag']} {m['home']}</span>
+                    <span class="match-score">{m['score_home']} – {m['score_away']}</span>
+                    <span style="{'font-weight:900;color:#C8A951;' if winner==m['away'] else ''}">{m['away']} {m['away_flag']}</span>
+                </div>
+                <div class="match-meta">
+                    {format_kickoff(m['kickoff_utc'], tz_offset)} &nbsp;|&nbsp; {m['venue']}
+                    &nbsp;<span class="badge badge-completed">FT</span>
+                    {'&nbsp;<span class="badge" style="background:#C8A951;color:#000;">Winner: ' + winner + '</span>' if winner else '&nbsp;<span class="badge" style="background:#555;color:#fff;">Draw</span>'}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)

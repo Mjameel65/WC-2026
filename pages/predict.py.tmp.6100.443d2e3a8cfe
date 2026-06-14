@@ -1,0 +1,130 @@
+import streamlit as st
+from data import MATCHES, calc_points, LOCKED_RESULT_IDS
+from auth import save_prediction, get_user_predictions
+from tz import format_kickoff, local_date
+
+
+def _score_badge(pts):
+    if pts == 3:
+        return '<span class="badge" style="background:#C8A951;color:#000;">+3 Exact!</span>'
+    if pts == 1:
+        return '<span class="badge" style="background:#2d6a4f;color:#fff;">+1 Winner</span>'
+    return '<span class="badge" style="background:#555;color:#fff;">0 pts</span>'
+
+
+def render(user: dict):
+    tz_offset = user.get("tz_offset", 3)
+    tz_name   = user.get("tz_name", "Jordan (UTC+3)")
+
+    st.title("Match Predictions")
+    st.caption(
+        f"Times in **{tz_name}**. "
+        "Predict the exact score → **3 pts**. Correct winner/draw → **1 pt**. "
+        "Predictions lock automatically at kick-off."
+    )
+
+    user_preds    = get_user_predictions(user["id"])
+    open_matches  = [m for m in MATCHES if not m["locked"] and m["id"] not in LOCKED_RESULT_IDS]
+    live_matches  = [m for m in MATCHES if m["locked"] and m["status"] == "live"]
+    done_matches  = [m for m in MATCHES if m["status"] == "completed"]
+
+    # ── Open for prediction ───────────────────────────────────────────────────
+    st.subheader(f"Open for Prediction ({len(open_matches)})")
+    if not open_matches:
+        st.info("No matches currently open for prediction.")
+    else:
+        for m in open_matches:
+            existing = user_preds.get(m["id"])
+            label = (
+                f"Group {m['group']} | {m['home_flag']} {m['home']} vs "
+                f"{m['away']} {m['away_flag']} — {format_kickoff(m['kickoff_utc'], tz_offset)}"
+            )
+            with st.expander(label, expanded=False):
+                st.caption(m["venue"])
+                col_h, col_dash, col_a = st.columns([1, 0.3, 1])
+                with col_h:
+                    st.markdown(f"**{m['home_flag']} {m['home']}**")
+                    ph = st.number_input(
+                        "Home goals", min_value=0, max_value=20,
+                        value=existing[0] if existing else 0,
+                        key=f"ph_{m['id']}", label_visibility="collapsed"
+                    )
+                with col_dash:
+                    st.markdown(
+                        "<div style='text-align:center;padding-top:0.4rem;font-size:1.3rem;'>–</div>",
+                        unsafe_allow_html=True,
+                    )
+                with col_a:
+                    st.markdown(f"**{m['away_flag']} {m['away']}**")
+                    pa = st.number_input(
+                        "Away goals", min_value=0, max_value=20,
+                        value=existing[1] if existing else 0,
+                        key=f"pa_{m['id']}", label_visibility="collapsed"
+                    )
+
+                btn_label = "Update Prediction" if existing else "Submit Prediction"
+                if st.button(btn_label, key=f"btn_{m['id']}", use_container_width=True):
+                    ok, msg = save_prediction(user["id"], m["id"], int(ph), int(pa))
+                    if ok:
+                        st.success(f"Saved: {m['home']} {int(ph)} – {int(pa)} {m['away']}")
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+                if existing:
+                    st.caption(f"Current prediction: **{existing[0]} – {existing[1]}**")
+
+    # ── Live / locked ─────────────────────────────────────────────────────────
+    if live_matches:
+        st.subheader(f"In Progress — Locked ({len(live_matches)})")
+        for m in live_matches:
+            existing  = user_preds.get(m["id"])
+            pred_str  = f"{existing[0]} – {existing[1]}" if existing else "No prediction"
+            st.markdown(f"""
+            <div class="match-card live">
+                <div class="match-teams">
+                    <span>{m['home_flag']} {m['home']}</span>
+                    <span class="match-score">LIVE</span>
+                    <span>{m['away']} {m['away_flag']}</span>
+                </div>
+                <div class="match-meta">
+                    Group {m['group']} &nbsp;|&nbsp; {m['venue']}
+                    &nbsp;|&nbsp; Your prediction: <b>{pred_str}</b>
+                    &nbsp;<span class="badge badge-live">&#9679; LOCKED</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # ── Completed ─────────────────────────────────────────────────────────────
+    st.subheader(f"Completed Matches ({len(done_matches)})")
+    if not done_matches:
+        st.caption("No completed matches yet.")
+    else:
+        for m in reversed(done_matches):
+            existing = user_preds.get(m["id"])
+            official = m["id"] in LOCKED_RESULT_IDS
+            if official and existing is None:
+                badge    = '<span class="badge" style="background:#8B0000;color:#fff;">Official result</span>'
+                pred_str = "—"
+            elif existing:
+                pts      = calc_points(existing[0], existing[1], m["score_home"], m["score_away"])
+                badge    = _score_badge(pts)
+                pred_str = f"{existing[0]} – {existing[1]}"
+            else:
+                badge    = '<span class="badge" style="background:#444;color:#aaa;">No prediction</span>'
+                pred_str = "—"
+
+            st.markdown(f"""
+            <div class="match-card completed">
+                <div class="match-teams">
+                    <span>{m['home_flag']} {m['home']}</span>
+                    <span class="match-score">{m['score_home']} – {m['score_away']}</span>
+                    <span>{m['away']} {m['away_flag']}</span>
+                </div>
+                <div class="match-meta">
+                    Group {m['group']} &nbsp;|&nbsp; {m['venue']}
+                    &nbsp;|&nbsp; Your pick: <b>{pred_str}</b>
+                    &nbsp;{badge}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)

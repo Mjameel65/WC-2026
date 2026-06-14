@@ -1,0 +1,86 @@
+import streamlit as st
+from data import ALL_TEAMS_LIST, TEAMS, MATCHES, STANDINGS
+from auth import update_favorite_team
+
+
+def render(user: dict):
+    st.title("My Profile")
+
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.markdown(f"""
+        <div style='background:#1a1a1a;border-radius:12px;padding:1.2rem;text-align:center;'>
+            <div style='font-size:3rem;'>&#128100;</div>
+            <h3 style='margin:0.3rem 0;'>{user['username']}</h3>
+            <p style='color:#888;font-size:0.85rem;margin:0;'>{user['email']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.subheader("Favourite Team")
+        current_fav = user.get("favorite_team", "") or ""
+        options = ["(None)"] + ALL_TEAMS_LIST
+        default_idx = options.index(current_fav) if current_fav in options else 0
+        new_fav = st.selectbox("Select your team", options, index=default_idx)
+
+        if st.button("Save", use_container_width=True):
+            val = "" if new_fav == "(None)" else new_fav
+            update_favorite_team(user["id"], val)
+            st.session_state["user"]["favorite_team"] = val
+            user["favorite_team"] = val
+            st.success("Saved!")
+
+    st.markdown("---")
+
+    # ── My team's matches ──────────────────────────────────────────────────
+    fav = user.get("favorite_team", "")
+    if fav:
+        flag = TEAMS.get(fav, {}).get("flag", "")
+        st.subheader(f"{flag} {fav} — All Matches")
+
+        team_matches = [m for m in MATCHES if fav in (m["home"], m["away"])]
+        if not team_matches:
+            st.caption("No matches found.")
+        else:
+            for m in team_matches:
+                status = m["status"]
+                badge = {
+                    "live":      '<span class="badge badge-live">&#9679; LIVE</span>',
+                    "completed": '<span class="badge badge-completed">FT</span>',
+                    "upcoming":  '<span class="badge badge-upcoming">Upcoming</span>',
+                }.get(status, "")
+                score = (
+                    f"{m['score_home']} – {m['score_away']}" if status == "completed"
+                    else ("LIVE" if status == "live" else m["kickoff_utc"].replace("T", " ") + " UTC")
+                )
+                st.markdown(f"""
+                <div class="match-card {status}">
+                    <div class="match-teams">
+                        <span>{m['home_flag']} {m['home']}</span>
+                        <span class="match-score">{score}</span>
+                        <span>{m['away']} {m['away_flag']}</span>
+                    </div>
+                    <div class="match-meta">
+                        Group {m['group']} &nbsp;|&nbsp; {m['kickoff_utc'][:10]} &nbsp;|&nbsp;
+                        {m['venue']} &nbsp;{badge}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        # standing
+        s = STANDINGS.get(fav)
+        if s:
+            st.subheader(f"Group {s['group']} Standing")
+            st.markdown(f"""
+            <table style='width:auto;'>
+                <thead><tr><th>P</th><th>W</th><th>D</th><th>L</th>
+                <th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr></thead>
+                <tbody><tr>
+                <td>{s['P']}</td><td>{s['W']}</td><td>{s['D']}</td><td>{s['L']}</td>
+                <td>{s['GF']}</td><td>{s['GA']}</td><td>{s['GD']}</td>
+                <td><b>{s['Pts']}</b></td>
+                </tr></tbody>
+            </table>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("Select a favourite team above to track their matches here.")
