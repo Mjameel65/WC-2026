@@ -1,10 +1,8 @@
 """
 Single database layer. All teams, groups, matches, users, predictions live here.
-Uses PostgreSQL via Supabase.
+Uses SQL Server via pymssql.
 """
-import psycopg2
-import psycopg2.extras
-import os
+import pymssql
 import secrets
 import bcrypt
 from datetime import datetime, timezone
@@ -13,10 +11,14 @@ import streamlit as st
 
 
 def get_conn():
-    return psycopg2.connect(
-        st.secrets["SUPABASE_DB_URL"],
-        sslmode="require",
-        cursor_factory=psycopg2.extras.RealDictCursor,
+    s = st.secrets["sqlserver"]
+    return pymssql.connect(
+        server=s["server"],
+        port=int(s["port"]),
+        user=s["user"],
+        password=s["password"],
+        database=s["database"],
+        charset="UTF-8",
     )
 
 
@@ -24,7 +26,7 @@ def get_conn():
 def _db():
     conn = get_conn()
     try:
-        cur = conn.cursor()
+        cur = conn.cursor(as_dict=True)
         yield cur
         conn.commit()
     except Exception:
@@ -39,76 +41,15 @@ def _db():
 # ─────────────────────────────────────────────────────────────────────────────
 def init_schema():
     with _db() as c:
+        # Ensure startup_points column exists (migration)
         c.execute("""
-            CREATE TABLE IF NOT EXISTS groups (
-                id   SERIAL PRIMARY KEY,
-                name TEXT UNIQUE NOT NULL
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.columns
+                WHERE object_id = OBJECT_ID('users') AND name = 'startup_points'
             )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS teams (
-                id            SERIAL PRIMARY KEY,
-                name          TEXT UNIQUE NOT NULL,
-                flag          TEXT NOT NULL DEFAULT '',
-                group_id      INTEGER REFERENCES groups(id),
-                confederation TEXT NOT NULL DEFAULT ''
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS venues (
-                id   SERIAL PRIMARY KEY,
-                key  TEXT UNIQUE NOT NULL,
-                name TEXT NOT NULL
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS matches (
-                id          SERIAL PRIMARY KEY,
-                group_id    INTEGER REFERENCES groups(id),
-                home_id     INTEGER REFERENCES teams(id),
-                away_id     INTEGER REFERENCES teams(id),
-                kickoff_utc TEXT NOT NULL,
-                venue_id    INTEGER REFERENCES venues(id),
-                score_home  INTEGER,
-                score_away  INTEGER
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id             SERIAL PRIMARY KEY,
-                username       TEXT UNIQUE NOT NULL,
-                email          TEXT UNIQUE NOT NULL,
-                password_hash  TEXT NOT NULL,
-                role           TEXT NOT NULL DEFAULT 'user',
-                verified       INTEGER NOT NULL DEFAULT 0,
-                favorite_team  TEXT DEFAULT '',
-                tz_name        TEXT DEFAULT 'Jordan (UTC+3)',
-                tz_offset      INTEGER DEFAULT 3,
-                startup_points INTEGER NOT NULL DEFAULT 0,
-                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                token      TEXT PRIMARY KEY,
-                user_id    INTEGER NOT NULL REFERENCES users(id),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS predictions (
-                id           SERIAL PRIMARY KEY,
-                user_id      INTEGER NOT NULL REFERENCES users(id),
-                match_id     INTEGER NOT NULL REFERENCES matches(id),
-                pred_home    INTEGER NOT NULL,
-                pred_away    INTEGER NOT NULL,
-                submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, match_id)
-            )
-        """)
-        # migration: add startup_points if missing
-        c.execute("""
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS startup_points INTEGER NOT NULL DEFAULT 0
+            BEGIN
+                ALTER TABLE users ADD startup_points INTEGER NOT NULL DEFAULT 0
+            END
         """)
 
 
@@ -274,30 +215,38 @@ def seed_data():
     with _db() as c:
         # groups
         for g in "ABCDEFGHIJKL":
-            c.execute("INSERT INTO groups(name) VALUES(%s) ON CONFLICT DO NOTHING", (g,))
+            c.execute(
+                "IF NOT EXISTS (SELECT 1 FROM groups WHERE [name]=%s) INSERT INTO groups([name]) VALUES(%s)",
+                (g, g),
+            )
 
         # venues
         for key, name in _VENUES:
-            c.execute("INSERT INTO venues(key,name) VALUES(%s,%s) ON CONFLICT DO NOTHING", (key, name))
+            c.execute(
+                "IF NOT EXISTS (SELECT 1 FROM venues WHERE [key]=%s) INSERT INTO venues([key],[name]) VALUES(%s,%s)",
+                (key, key, name),
+            )
 
         # teams
         for name, flag, grp, conf in _TEAMS:
-            c.execute("SELECT id FROM groups WHERE name=%s", (grp,))
-            grp_id = c.fetchone()["id"]
-            c.execute(
-                "INSERT INTO teams(name,flag,group_id,confederation) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",
-                (name, flag, grp_id, conf),
-            )
+            c.execute("SELECT id FROM groups WHERE [name]=%s", (grp,))
+            row = c.fetchone()
+            if row:
+                grp_id = row["id"]
+                c.execute(
+                    "IF NOT EXISTS (SELECT 1 FROM teams WHERE [name]=%s) INSERT INTO teams([name],flag,group_id,confederation) VALUES(%s,%s,%s,%s)",
+                    (name, name, flag, grp_id, conf),
+                )
 
         # matches (only insert if table is empty)
-        c.execute("SELECT COUNT(*) FROM matches")
-        if c.fetchone()["count"] == 0:
+        c.execute("SELECT COUNT(*) AS cnt FROM matches")
+        if c.fetchone()["cnt"] == 0:
             for home, away, kickoff, venue_key, sh, sa in _MATCHES:
-                c.execute("SELECT id FROM teams WHERE name=%s", (home,))
+                c.execute("SELECT id FROM teams WHERE [name]=%s", (home,))
                 home_id = c.fetchone()["id"]
-                c.execute("SELECT id FROM teams WHERE name=%s", (away,))
+                c.execute("SELECT id FROM teams WHERE [name]=%s", (away,))
                 away_id = c.fetchone()["id"]
-                c.execute("SELECT id FROM venues WHERE key=%s", (venue_key,))
+                c.execute("SELECT id FROM venues WHERE [key]=%s", (venue_key,))
                 venue_id = c.fetchone()["id"]
                 c.execute("SELECT group_id FROM teams WHERE id=%s", (home_id,))
                 grp_id = c.fetchone()["group_id"]
@@ -342,10 +291,10 @@ def _is_locked(kickoff_utc):
 def get_matches():
     with _db() as c:
         c.execute("""
-            SELECT m.id, g.name AS grp,
-                   ht.name AS home, ht.flag AS home_flag,
-                   at.name AS away, at.flag AS away_flag,
-                   m.kickoff_utc, v.name AS venue,
+            SELECT m.id, g.[name] AS grp,
+                   ht.[name] AS home, ht.flag AS home_flag,
+                   at.[name] AS away, at.flag AS away_flag,
+                   m.kickoff_utc, v.[name] AS venue,
                    m.score_home, m.score_away
             FROM matches m
             JOIN groups g  ON g.id  = m.group_id
@@ -377,9 +326,9 @@ def get_matches():
 def get_teams():
     with _db() as c:
         c.execute("""
-            SELECT t.id, t.name, t.flag, g.name AS grp, t.confederation
+            SELECT t.id, t.[name], t.flag, g.[name] AS grp, t.confederation
             FROM teams t JOIN groups g ON g.id=t.group_id
-            ORDER BY g.name, t.name
+            ORDER BY g.[name], t.[name]
         """)
         rows = c.fetchall()
     return [dict(r) for r in rows]
@@ -387,7 +336,7 @@ def get_teams():
 
 def get_groups():
     with _db() as c:
-        c.execute("SELECT name FROM groups ORDER BY name")
+        c.execute("SELECT [name] FROM groups ORDER BY [name]")
         rows = c.fetchall()
     return [r["name"] for r in rows]
 
@@ -421,11 +370,7 @@ def get_standings():
 # Scoring
 # ─────────────────────────────────────────────────────────────────────────────
 def calc_points(ph, pa, ah, aa):
-    """
-    3 pts: exact score match
-    1 pt : correct outcome but wrong score
-    0 pts: wrong outcome
-    """
+    """3 pts: exact score. 1 pt: correct outcome. 0: wrong."""
     def outcome(h, a): return "H" if h > a else ("A" if a > h else "D")
     if ph == ah and pa == aa:
         return 3
@@ -440,19 +385,22 @@ def calc_points(ph, pa, ah, aa):
 def save_prediction(user_id, match_id, pred_home, pred_away):
     with _db() as c:
         c.execute("""
-            INSERT INTO predictions(user_id,match_id,pred_home,pred_away)
-            VALUES(%s,%s,%s,%s)
-            ON CONFLICT(user_id,match_id) DO UPDATE SET
-              pred_home=EXCLUDED.pred_home,
-              pred_away=EXCLUDED.pred_away,
-              submitted_at=CURRENT_TIMESTAMP
+            MERGE predictions AS t
+            USING (SELECT %s AS user_id, %s AS match_id, %s AS pred_home, %s AS pred_away) AS s
+            ON t.user_id = s.user_id AND t.match_id = s.match_id
+            WHEN MATCHED THEN
+                UPDATE SET pred_home = s.pred_home, pred_away = s.pred_away,
+                           submitted_at = GETUTCDATE()
+            WHEN NOT MATCHED THEN
+                INSERT (user_id, match_id, pred_home, pred_away)
+                VALUES (s.user_id, s.match_id, s.pred_home, s.pred_away);
         """, (user_id, match_id, pred_home, pred_away))
 
 
 def get_user_predictions(user_id):
     with _db() as c:
         c.execute(
-            "SELECT match_id,pred_home,pred_away FROM predictions WHERE user_id=%s",
+            "SELECT match_id, pred_home, pred_away FROM predictions WHERE user_id=%s",
             (user_id,),
         )
         rows = c.fetchall()
@@ -514,7 +462,7 @@ def get_leaderboard():
     with _db() as c:
         c.execute("SELECT id, username, favorite_team, startup_points FROM users ORDER BY username")
         users = c.fetchall()
-        c.execute("SELECT user_id,match_id,pred_home,pred_away FROM predictions")
+        c.execute("SELECT user_id, match_id, pred_home, pred_away FROM predictions")
         all_pred = c.fetchall()
 
     upreds = {}
@@ -566,25 +514,29 @@ def register_user(username, email, password):
         return False, "Username must be at least 3 characters."
     if len(password) < 6:
         return False, "Password must be at least 6 characters."
+    uname = username.strip()
+    mail  = email.strip().lower()
+    with _db() as c:
+        c.execute("SELECT 1 FROM users WHERE username=%s", (uname,))
+        if c.fetchone():
+            return False, "Username already taken."
+        c.execute("SELECT 1 FROM users WHERE email=%s", (mail,))
+        if c.fetchone():
+            return False, "Email already registered."
     pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     try:
         with _db() as c:
             c.execute(
                 "INSERT INTO users(username,email,password_hash,role,verified) VALUES(%s,%s,%s,'user',0)",
-                (username.strip(), email.strip().lower(), pw),
+                (uname, mail, pw),
             )
         return True, "Account created! Please wait for admin verification before you can access the app."
-    except Exception as e:
-        msg = str(e)
-        if "username" in msg: return False, "Username already taken."
-        if "email"    in msg: return False, "Email already registered."
+    except Exception:
         return False, "Registration failed."
 
 
 def login_user(identifier, password):
-    """Returns (status, user_dict).
-    status: 'ok' | 'bad_credentials' | 'pending'
-    """
+    """Returns (status, user_dict). status: 'ok' | 'bad_credentials' | 'pending'"""
     with _db() as c:
         c.execute(
             "SELECT * FROM users WHERE username=%s OR email=%s",

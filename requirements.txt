@@ -2,4 +2,4 @@ streamlit>=1.35.0
 bcrypt>=4.1.0
 pandas>=2.0.0
 extra-streamlit-components
-psycopg2-binary>=2.9.0
+pymssql>=2.3.0
