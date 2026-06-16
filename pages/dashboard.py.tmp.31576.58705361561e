@@ -10,7 +10,7 @@ def render(user: dict):
     st.caption("All users' predictions — read only.")
 
     matches  = get_matches()
-    users    = [u["username"] for u in get_verified_users()]
+    users    = [u["username"] for u in get_all_users()]
     all_pred = get_all_predictions()
 
     if not matches:

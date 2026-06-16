@@ -1,4 +1,5 @@
 import streamlit as st
+from datetime import datetime, timedelta
 
 st.set_page_config(
     page_title="World Cup 2026",
@@ -46,6 +47,21 @@ if "user" not in st.session_state:
             st.session_state["user"]          = restored
             st.session_state["session_token"] = token
 
+# Write the "remember me" cookie on the run *after* login, not the same run
+# that calls st.rerun() — calling cookie_mgr.set() and rerunning immediately
+# can cut off the iframe's cookie write before the browser commits it.
+pending = st.session_state.pop("_pending_cookie", None)
+if pending:
+    p_token, p_remember = pending
+    if p_remember:
+        cookie_mgr.set(COOKIE_NAME, p_token,
+                        expires_at=datetime.now() + timedelta(days=COOKIE_TTL))
+    else:
+        try:
+            cookie_mgr.set(COOKIE_NAME, "", expires_at=datetime.now() - timedelta(days=1))
+        except Exception:
+            pass
+
 # ── Auth gate ──────────────────────────────────────────────────────────────────
 if "user" not in st.session_state:
     st.markdown("""
@@ -59,16 +75,17 @@ if "user" not in st.session_state:
 
     with tab_in:
         with st.form("login"):
-            ident = st.text_input("Username or Email")
-            pw    = st.text_input("Password", type="password")
+            ident    = st.text_input("Username or Email")
+            pw       = st.text_input("Password", type="password")
+            remember = st.checkbox("Remember me", value=True)
             if st.form_submit_button("Login", use_container_width=True):
                 if ident and pw:
                     status, u = login_user(ident, pw)
                     if status == "ok":
                         token = create_session(u["id"])
-                        cookie_mgr.set(COOKIE_NAME, token, max_age=COOKIE_TTL * 86400)
-                        st.session_state["user"]          = u
-                        st.session_state["session_token"] = token
+                        st.session_state["user"]           = u
+                        st.session_state["session_token"]  = token
+                        st.session_state["_pending_cookie"] = (token, remember)
                         st.rerun()
                     elif status == "pending":
                         st.warning(

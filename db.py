@@ -460,6 +460,7 @@ def get_all_predictions():
         c.execute("""
             SELECT p.match_id, u.username, p.pred_home, p.pred_away
             FROM predictions p JOIN users u ON u.id = p.user_id
+            WHERE u.verified=1
         """)
         rows = c.fetchall()
     result = {}
@@ -473,7 +474,7 @@ def get_all_predictions_for_match(match_id):
         c.execute("""
             SELECT u.username, p.pred_home, p.pred_away, p.submitted_at
             FROM predictions p JOIN users u ON u.id=p.user_id
-            WHERE p.match_id=%s
+            WHERE p.match_id=%s AND u.verified=1
             ORDER BY u.username
         """, (match_id,))
         rows = c.fetchall()
@@ -507,7 +508,10 @@ def get_leaderboard():
     completed = {m["id"]: m for m in matches if m["status"] == "completed"}
 
     with _db() as c:
-        c.execute("SELECT id, username, favorite_team, startup_points FROM users ORDER BY username")
+        c.execute("""
+            SELECT id, username, favorite_team, startup_points
+            FROM users WHERE verified=1 ORDER BY username
+        """)
         users = c.fetchall()
         c.execute("SELECT user_id,match_id,pred_home,pred_away FROM predictions")
         all_pred = c.fetchall()
@@ -609,6 +613,11 @@ def get_all_users():
         )
         rows = c.fetchall()
     return [dict(r) for r in rows]
+
+
+def get_verified_users():
+    """Same as get_all_users() but excludes pending (unverified) accounts."""
+    return [u for u in get_all_users() if str(u["verified"]) in ("1", "True", "true")]
 
 
 def set_user_role(user_id, role):
