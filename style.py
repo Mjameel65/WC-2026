@@ -2,8 +2,9 @@
 
 GLOBAL_CSS = """
 <style>
-/* ── Mobile-first base ───────────────────────────────────────────────── */
+/* ── Theme variables — dark by default ───────────────────────────────── */
 :root {
+    color-scheme: dark;
     --primary: #8B0000;
     --gold:    #C8A951;
     --bg:      #0a0a0a;
@@ -13,6 +14,23 @@ GLOBAL_CSS = """
     --live:    #e63946;
     --done:    #2d6a4f;
     --upcoming:#1d3557;
+    --tab-bg:  #1a1a1a;
+    --tab-sel: #8B0000;
+    --tab-txt: #f0f0f0;
+}
+
+/* ── Light-mode adaptation (browser prefers light) ───────────────────── */
+@media (prefers-color-scheme: light) {
+    :root {
+        color-scheme: light;
+        --bg:      #f4f4f4;
+        --card:    #ffffff;
+        --text:    #111111;
+        --muted:   #555555;
+        --tab-bg:  #e8e8e8;
+        --tab-sel: #8B0000;
+        --tab-txt: #111111;
+    }
 }
 
 html, body, [data-testid="stAppViewContainer"] {
@@ -27,18 +45,33 @@ html, body, [data-testid="stAppViewContainer"] {
 /* hide default streamlit header */
 header[data-testid="stHeader"] { display: none; }
 
-/* compact tabs */
-.stTabs [role="tablist"] { gap: 0.25rem; }
-.stTabs [role="tab"] {
-    background: var(--card);
-    border-radius: 6px 6px 0 0;
-    color: var(--text);
-    padding: 0.4rem 0.8rem;
-    font-size: 0.85rem;
+/* ── st.tabs (used in pages) ─────────────────────────────────────────── */
+.stTabs [role="tablist"]  { gap: 0.25rem; }
+.stTabs [role="tab"],
+.stTabs [data-baseweb="tab"] {
+    background:    var(--tab-bg)  !important;
+    border-radius: 6px 6px 0 0   !important;
+    color:         var(--tab-txt) !important;
+    padding:       0.4rem 0.8rem  !important;
+    font-size:     0.85rem        !important;
 }
-.stTabs [aria-selected="true"] {
-    background: var(--primary) !important;
-    color: #fff !important;
+.stTabs [role="tab"][aria-selected="true"],
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    background: var(--tab-sel) !important;
+    color:      #fff           !important;
+}
+
+/* ── Horizontal radio nav bar ────────────────────────────────────────── */
+div[data-testid="stRadio"] label,
+div[data-testid="stRadio"] label p,
+div[data-testid="stRadio"] span {
+    color: var(--tab-txt) !important;
+}
+/* Selected radio item — highlighted gold */
+div[data-testid="stRadio"] label:has(input:checked),
+div[data-testid="stRadio"] label:has(input:checked) p {
+    color:       var(--gold) !important;
+    font-weight: 700         !important;
 }
 
 /* ── Match card ──────────────────────────────────────────────────────── */
