@@ -124,7 +124,7 @@ def _logout():
         cookie_mgr.set(COOKIE_NAME, "", max_age=0)
     except Exception:
         pass
-    for key in ["user", "page", "show_profile"]:
+    for key in ["user", "page", "show_profile", "_nav"]:
         st.session_state.pop(key, None)
 
 # ── Global top-bar CSS ─────────────────────────────────────────────────────────
@@ -222,8 +222,8 @@ NAV = {
 if is_admin:
     NAV["Admin"] = "⚙️"
 
-if "page" not in st.session_state:
-    st.session_state["page"] = "Home"
+if "_nav" not in st.session_state:
+    st.session_state["_nav"] = "Home"
 
 # Sidebar (desktop)
 with st.sidebar:
@@ -235,9 +235,9 @@ with st.sidebar:
         st.caption("⚙️ Admin")
     st.markdown("---")
     for label, icon in NAV.items():
-        active = "✦ " if st.session_state["page"] == label else ""
+        active = "✦ " if st.session_state["_nav"] == label else ""
         if st.button(f"{icon} {active}{label}", use_container_width=True, key=f"sb_{label}"):
-            st.session_state["page"]         = label
+            st.session_state["_nav"]         = label   # sync radio widget state
             st.session_state["show_profile"] = False
             st.rerun()
     st.markdown("---")
@@ -245,19 +245,19 @@ with st.sidebar:
         _logout()
         st.rerun()
 
-# Mobile / top tab bar (radio)
-choice = st.radio(
+# Mobile / top tab bar — key= lets Streamlit own the state; no index= needed
+_nav_before = st.session_state["_nav"]
+st.radio(
     "nav", list(NAV.keys()),
-    index=list(NAV.keys()).index(st.session_state["page"]),
+    key="_nav",
     horizontal=True, label_visibility="collapsed",
 )
-if choice != st.session_state["page"]:
-    st.session_state["page"]         = choice
+if st.session_state["_nav"] != _nav_before:
     st.session_state["show_profile"] = False
 
 # ── Render page ────────────────────────────────────────────────────────────────
 if not st.session_state.get("show_profile", False):
-    p = st.session_state["page"]
+    p = st.session_state["_nav"]
     if   p == "Home":        pg_home.render(user)
     elif p == "Schedule":    pg_schedule.render(user)
     elif p == "Groups":      pg_groups.render(user)
