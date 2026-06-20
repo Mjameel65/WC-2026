@@ -124,7 +124,7 @@ def _logout():
         cookie_mgr.set(COOKIE_NAME, "", max_age=0)
     except Exception:
         pass
-    for key in ["user", "page", "show_profile", "_nav"]:
+    for key in ["user", "page", "show_profile"]:
         st.session_state.pop(key, None)
 
 # ── Global top-bar CSS ─────────────────────────────────────────────────────────
@@ -210,22 +210,19 @@ if st.session_state.get("show_profile", False):
 
 # ── Navigation ─────────────────────────────────────────────────────────────────
 NAV = {
-    "Home":        "⚽",
-    "Schedule":    "📅",
-    "Groups":      "🏆",
-    "Results":     "📋",
-    "Predict":     "🎯",
+    "Home":              "⚽",
+    "Schedule":          "📅",
+    "Groups":            "🏆",
+    "Results":           "📋",
+    "Predict":           "🎯",
     "Users Predictions": "👁️",
-    "Scores":      "🏅",
-    "Leaderboard": "📊",
+    "Scores":            "🏅",
+    "Leaderboard":       "📊",
 }
 if is_admin:
     NAV["Admin"] = "⚙️"
 
-if "_nav" not in st.session_state:
-    st.session_state["_nav"] = "Home"
-
-# Sidebar (desktop)
+# Sidebar — user info + logout only (tabs handle navigation)
 with st.sidebar:
     st.markdown(f"**{user['username']}**")
     if fav:
@@ -234,36 +231,28 @@ with st.sidebar:
     if is_admin:
         st.caption("⚙️ Admin")
     st.markdown("---")
-    for label, icon in NAV.items():
-        active = "✦ " if st.session_state["_nav"] == label else ""
-        if st.button(f"{icon} {active}{label}", use_container_width=True, key=f"sb_{label}"):
-            st.session_state["_nav"]         = label   # sync radio widget state
-            st.session_state["show_profile"] = False
-            st.rerun()
-    st.markdown("---")
     if st.button("🚪 Logout", use_container_width=True, key="sb_logout"):
         _logout()
         st.rerun()
 
-# Mobile / top tab bar — key= lets Streamlit own the state; no index= needed
-_nav_before = st.session_state["_nav"]
-st.radio(
-    "nav", list(NAV.keys()),
-    key="_nav",
-    horizontal=True, label_visibility="collapsed",
-)
-if st.session_state["_nav"] != _nav_before:
-    st.session_state["show_profile"] = False
+# ── Tabs — switching is client-side JS, no Python rerun on click ───────────────
+tab_labels = [f"{icon} {name}" for name, icon in NAV.items()]
+tabs = st.tabs(tab_labels)
 
-# ── Render page ────────────────────────────────────────────────────────────────
-if not st.session_state.get("show_profile", False):
-    p = st.session_state["_nav"]
-    if   p == "Home":        pg_home.render(user)
-    elif p == "Schedule":    pg_schedule.render(user)
-    elif p == "Groups":      pg_groups.render(user)
-    elif p == "Results":     pg_results.render(user)
-    elif p == "Predict":     pg_predict.render(user)
-    elif p == "Users Predictions": pg_dashboard.render(user)
-    elif p == "Scores":      pg_scores.render(user)
-    elif p == "Leaderboard": pg_leaderboard.render(user)
-    elif p == "Admin":       pg_admin.render(user)
+page_renderers = {
+    "Home":              pg_home.render,
+    "Schedule":          pg_schedule.render,
+    "Groups":            pg_groups.render,
+    "Results":           pg_results.render,
+    "Predict":           pg_predict.render,
+    "Users Predictions": pg_dashboard.render,
+    "Scores":            pg_scores.render,
+    "Leaderboard":       pg_leaderboard.render,
+}
+if is_admin:
+    page_renderers["Admin"] = pg_admin.render
+
+for tab, page_name in zip(tabs, NAV.keys()):
+    with tab:
+        if not st.session_state.get("show_profile", False):
+            page_renderers[page_name](user)
