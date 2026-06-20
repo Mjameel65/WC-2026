@@ -733,6 +733,12 @@ def login_user(identifier, password):
     return "ok", dict(row)
 
 
+def reset_user_password(user_id, new_password):
+    pw = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    with _db() as c:
+        c.execute("UPDATE users SET password_hash=%s WHERE id=%s", (pw, user_id))
+
+
 def update_user_field(user_id, field, value):
     allowed = {"favorite_team", "tz_name", "tz_offset"}
     if field not in allowed:
