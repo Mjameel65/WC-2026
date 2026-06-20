@@ -1,5 +1,5 @@
 import streamlit as st
-from db import (get_matches, get_verified_users, get_all_predictions_for_match,
+from db import (get_matches, get_verified_users, get_all_predictions_all_matches,
                 get_leaderboard, calc_points)
 from tz import format_kickoff
 
@@ -58,11 +58,12 @@ def render(user: dict):
     # ── Match-by-match grid ───────────────────────────────────────────────────
     st.subheader("Match-by-Match Breakdown")
 
-    # Build prediction lookup: {match_id: {username: (ph, pa)}}
-    pred_map = {}
-    for m in done:
-        preds = get_all_predictions_for_match(m["id"])
-        pred_map[m["id"]] = {p["username"]: (p["pred_home"], p["pred_away"]) for p in preds}
+    # Build prediction lookup: {match_id: {username: (ph, pa)}} — single query
+    _all = get_all_predictions_all_matches()
+    pred_map = {
+        mid: {p["username"]: (p["pred_home"], p["pred_away"]) for p in plist}
+        for mid, plist in _all.items()
+    }
 
     for m in done:
         preds = pred_map.get(m["id"], {})
