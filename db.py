@@ -338,6 +338,7 @@ def _is_locked(kickoff_utc):
     return _now_utc() >= _parse(kickoff_utc)
 
 
+@st.cache_data(ttl=60)
 def get_matches():
     with _db() as c:
         c.execute("""
@@ -373,6 +374,7 @@ def get_matches():
     return out
 
 
+@st.cache_data(ttl=60)
 def get_teams():
     with _db() as c:
         c.execute("""
@@ -384,6 +386,7 @@ def get_teams():
     return [dict(r) for r in rows]
 
 
+@st.cache_data(ttl=60)
 def get_groups():
     with _db() as c:
         c.execute("SELECT name FROM groups ORDER BY name")
@@ -391,6 +394,7 @@ def get_groups():
     return [r["name"] for r in rows]
 
 
+@st.cache_data(ttl=60)
 def get_standings():
     teams   = get_teams()
     matches = get_matches()
@@ -442,6 +446,7 @@ def save_prediction(user_id, match_id, pred_home, pred_away):
               pred_away=EXCLUDED.pred_away,
               submitted_at=CURRENT_TIMESTAMP
         """, (user_id, match_id, pred_home, pred_away))
+    st.cache_data.clear()
 
 
 def get_user_predictions(user_id):
@@ -454,6 +459,7 @@ def get_user_predictions(user_id):
     return {r["match_id"]: (r["pred_home"], r["pred_away"]) for r in rows}
 
 
+@st.cache_data(ttl=60)
 def get_all_predictions():
     """Returns {match_id: {username: (pred_home, pred_away)}} for all matches."""
     with _db() as c:
@@ -481,6 +487,7 @@ def get_all_predictions_for_match(match_id):
     return [dict(r) for r in rows]
 
 
+@st.cache_data(ttl=60)
 def get_all_predictions_all_matches():
     """Returns {match_id: [{"username":..,"pred_home":..,"pred_away":..}]} in one query."""
     with _db() as c:
@@ -510,6 +517,7 @@ def set_match_result(match_id, score_home, score_away):
             "UPDATE matches SET score_home=%s, score_away=%s WHERE id=%s",
             (score_home, score_away, match_id),
         )
+    st.cache_data.clear()
 
 
 def clear_match_result(match_id):
@@ -518,11 +526,13 @@ def clear_match_result(match_id):
             "UPDATE matches SET score_home=NULL, score_away=NULL WHERE id=%s",
             (match_id,),
         )
+    st.cache_data.clear()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Leaderboard
 # ─────────────────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=60)
 def get_leaderboard():
     matches   = get_matches()
     completed = {m["id"]: m for m in matches if m["status"] == "completed"}
@@ -575,6 +585,7 @@ def get_leaderboard():
 def set_user_startup_points(user_id: int, points: int):
     with _db() as c:
         c.execute("UPDATE users SET startup_points=%s WHERE id=%s", (points, user_id))
+    st.cache_data.clear()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -626,6 +637,7 @@ def update_user_field(user_id, field, value):
         c.execute(f"UPDATE users SET {field}=%s WHERE id=%s", (value, user_id))
 
 
+@st.cache_data(ttl=60)
 def get_all_users():
     with _db() as c:
         c.execute(
@@ -643,11 +655,13 @@ def get_verified_users():
 def set_user_role(user_id, role):
     with _db() as c:
         c.execute("UPDATE users SET role=%s WHERE id=%s", (role, user_id))
+    st.cache_data.clear()
 
 
 def set_user_verified(user_id, verified: bool):
     with _db() as c:
         c.execute("UPDATE users SET verified=%s WHERE id=%s", (1 if verified else 0, user_id))
+    st.cache_data.clear()
 
 
 def get_pending_users():
