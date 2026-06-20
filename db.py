@@ -481,6 +481,26 @@ def get_all_predictions_for_match(match_id):
     return [dict(r) for r in rows]
 
 
+def get_all_predictions_all_matches():
+    """Returns {match_id: [{"username":..,"pred_home":..,"pred_away":..}]} in one query."""
+    with _db() as c:
+        c.execute("""
+            SELECT p.match_id, u.username, p.pred_home, p.pred_away
+            FROM predictions p JOIN users u ON u.id=p.user_id
+            WHERE u.verified=1
+            ORDER BY u.username
+        """)
+        rows = c.fetchall()
+    result = {}
+    for r in rows:
+        result.setdefault(r["match_id"], []).append({
+            "username":  r["username"],
+            "pred_home": r["pred_home"],
+            "pred_away": r["pred_away"],
+        })
+    return result
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Admin: update match result
 # ─────────────────────────────────────────────────────────────────────────────

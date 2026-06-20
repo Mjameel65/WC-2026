@@ -1,6 +1,6 @@
 import streamlit as st
 from datetime import datetime, timezone, timedelta, date
-from db import get_leaderboard, get_matches, get_all_predictions_for_match, get_teams, calc_points
+from db import get_leaderboard, get_matches, get_all_predictions_all_matches, get_teams, calc_points
 from tz import format_kickoff, local_date
 
 
@@ -10,9 +10,10 @@ def render(user: dict):
     st.title("Leaderboard")
     st.caption("**3 pts** exact score · **1 pt** correct outcome · **0** wrong")
 
-    board   = get_leaderboard()
-    matches = get_matches()
-    teams   = {t["name"]: t for t in get_teams()}
+    board      = get_leaderboard()
+    matches    = get_matches()
+    teams      = {t["name"]: t for t in get_teams()}
+    all_preds  = get_all_predictions_all_matches()   # single query, no per-match round-trips
     medals  = {1: "🥇", 2: "🥈", 3: "🥉"}
     me      = user["username"]
 
@@ -141,7 +142,7 @@ def render(user: dict):
         is_done = m["status"] == "completed"
         is_live = m["locked"] and not is_done
 
-        preds    = get_all_predictions_for_match(m["id"])
+        preds    = all_preds.get(m["id"], [])
         pred_map = {p["username"]: p for p in preds}
 
         # Expander title
