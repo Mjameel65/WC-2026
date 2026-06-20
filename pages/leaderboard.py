@@ -1,6 +1,6 @@
 import streamlit as st
 from datetime import datetime, timezone, timedelta, date
-from db import get_leaderboard, get_matches, get_all_predictions_all_matches, get_teams, calc_points
+from db import get_leaderboard, get_matches, get_all_predictions_all_matches, get_teams, calc_points, calc_points_knockout
 from tz import format_kickoff, local_date
 
 
@@ -159,41 +159,87 @@ def render(user: dict):
                      f"{m['home_flag']} {m['home']} vs {m['away']} {m['away_flag']}  🕐 {kick}")
 
         with st.expander(title, expanded=False):
-            mhtml = """<table><thead><tr>
-                <th style='text-align:left'>Player</th>
-                <th>Predicted</th>
-                <th>Points</th>
-            </tr></thead><tbody>"""
+            is_ko = m.get("stage", "group") != "group"
+
+            if is_ko:
+                mhtml = """<table><thead><tr>
+                    <th style='text-align:left'>Player</th>
+                    <th>Predicted</th><th>Winner pick</th><th>Base</th><th>Bonus</th><th>Total</th>
+                </tr></thead><tbody>"""
+            else:
+                mhtml = """<table><thead><tr>
+                    <th style='text-align:left'>Player</th>
+                    <th>Predicted</th><th>Points</th>
+                </tr></thead><tbody>"""
 
             predictors = set()
+
+            # Pre-compute knockout bonus: how many users got winner wrong
+            ko_wrong_count = 0
+            ko_right_users = set()
+            if is_ko and is_done and m.get("penalty_winner") is not None or (is_ko and is_done and m["score_home"] != m["score_away"]):
+                for p in preds:
+                    _, got_win = calc_points_knockout(
+                        p["pred_home"], p["pred_away"], p.get("pred_winner"),
+                        m["score_home"], m["score_away"], m.get("penalty_winner"),
+                        m["home"], m["away"],
+                    )
+                    if got_win:
+                        ko_right_users.add(p["username"])
+                    else:
+                        ko_wrong_count += 1
 
             # Users who predicted
             for p in preds:
                 predictors.add(p["username"])
-                if is_done:
-                    pts    = calc_points(p["pred_home"], p["pred_away"],
-                                         m["score_home"], m["score_away"])
-                    pt_lbl = (
-                        '<span style="color:#C8A951;font-weight:700;">+3 Exact</span>'  if pts == 3
-                        else ('<span style="color:#2d6a4f;">+1 Winner</span>'            if pts == 1
-                              else '<span style="color:#888;">0</span>')
-                    )
-                else:
-                    pt_lbl = '<span style="color:#555;">Pending</span>'
+                hl = "color:#C8A951;" if p["username"] == me else ""
 
-                hl     = "color:#C8A951;" if p["username"] == me else ""
-                mhtml += (f"<tr><td style='text-align:left;{hl}'>{p['username']}</td>"
-                          f"<td>{p['pred_home']} – {p['pred_away']}</td>"
-                          f"<td>{pt_lbl}</td></tr>")
+                if is_ko:
+                    pw_show = p.get("pred_winner") or "—"
+                    if is_done:
+                        base, got_win = calc_points_knockout(
+                            p["pred_home"], p["pred_away"], p.get("pred_winner"),
+                            m["score_home"], m["score_away"], m.get("penalty_winner"),
+                            m["home"], m["away"],
+                        )
+                        bonus    = ko_wrong_count if p["username"] in ko_right_users else 0
+                        base_lbl = f'<span style="color:#C8A951;font-weight:700;">+{base}</span>' if base else '<span style="color:#888;">0</span>'
+                        bon_lbl  = f'<span style="color:#2d6a4f;font-weight:700;">+{bonus}</span>' if bonus else '<span style="color:#888;">0</span>'
+                        tot_lbl  = f'<span style="font-weight:700;">{base+bonus}</span>'
+                    else:
+                        base_lbl = bon_lbl = tot_lbl = '<span style="color:#555;">Pending</span>'
+                    mhtml += (f"<tr><td style='text-align:left;{hl}'>{p['username']}</td>"
+                              f"<td>{p['pred_home']} – {p['pred_away']}</td>"
+                              f"<td>{pw_show}</td>"
+                              f"<td>{base_lbl}</td><td>{bon_lbl}</td><td>{tot_lbl}</td></tr>")
+                else:
+                    if is_done:
+                        pts    = calc_points(p["pred_home"], p["pred_away"], m["score_home"], m["score_away"])
+                        pt_lbl = (
+                            '<span style="color:#C8A951;font-weight:700;">+3 Exact</span>' if pts == 3
+                            else ('<span style="color:#2d6a4f;">+1 Winner</span>'           if pts == 1
+                                  else '<span style="color:#888;">0</span>')
+                        )
+                    else:
+                        pt_lbl = '<span style="color:#555;">Pending</span>'
+                    mhtml += (f"<tr><td style='text-align:left;{hl}'>{p['username']}</td>"
+                              f"<td>{p['pred_home']} – {p['pred_away']}</td>"
+                              f"<td>{pt_lbl}</td></tr>")
 
             # Users who did NOT predict
             for r in board:
                 if r["username"] not in predictors:
-                    hl     = "color:#C8A951;" if r["username"] == me else "color:#555;"
-                    no_pt  = "0" if is_done else "—"
-                    mhtml += (f"<tr><td style='text-align:left;{hl}'>{r['username']}</td>"
-                              f"<td style='color:#555;'>—</td>"
-                              f"<td style='color:#555;'>{no_pt}</td></tr>")
+                    hl    = "color:#C8A951;" if r["username"] == me else "color:#555;"
+                    no_pt = "0" if is_done else "—"
+                    if is_ko:
+                        mhtml += (f"<tr><td style='text-align:left;{hl}'>{r['username']}</td>"
+                                  f"<td style='color:#555;'>—</td><td style='color:#555;'>—</td>"
+                                  f"<td style='color:#555;'>{no_pt}</td><td style='color:#555;'>0</td>"
+                                  f"<td style='color:#555;'>{no_pt}</td></tr>")
+                    else:
+                        mhtml += (f"<tr><td style='text-align:left;{hl}'>{r['username']}</td>"
+                                  f"<td style='color:#555;'>—</td>"
+                                  f"<td style='color:#555;'>{no_pt}</td></tr>")
 
             mhtml += "</tbody></table>"
             st.markdown(mhtml, unsafe_allow_html=True)

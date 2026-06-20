@@ -101,14 +101,16 @@ def init_schema():
                 match_id     INTEGER NOT NULL REFERENCES matches(id),
                 pred_home    INTEGER NOT NULL,
                 pred_away    INTEGER NOT NULL,
+                pred_winner  TEXT,
                 submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, match_id)
             )
         """)
-        # migration: add startup_points if missing
-        c.execute("""
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS startup_points INTEGER NOT NULL DEFAULT 0
-        """)
+        # migrations
+        c.execute("ALTER TABLE users    ADD COLUMN IF NOT EXISTS startup_points  INTEGER NOT NULL DEFAULT 0")
+        c.execute("ALTER TABLE matches  ADD COLUMN IF NOT EXISTS stage           TEXT NOT NULL DEFAULT 'group'")
+        c.execute("ALTER TABLE matches  ADD COLUMN IF NOT EXISTS penalty_winner  TEXT")
+        c.execute("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS pred_winner  TEXT")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -346,9 +348,10 @@ def get_matches():
                    ht.name AS home, ht.flag AS home_flag,
                    at.name AS away, at.flag AS away_flag,
                    m.kickoff_utc, v.name AS venue,
-                   m.score_home, m.score_away
+                   m.score_home, m.score_away,
+                   m.stage, m.penalty_winner
             FROM matches m
-            JOIN groups g  ON g.id  = m.group_id
+            LEFT JOIN groups g  ON g.id  = m.group_id
             JOIN teams  ht ON ht.id = m.home_id
             JOIN teams  at ON at.id = m.away_id
             JOIN venues v  ON v.id  = m.venue_id
@@ -358,18 +361,20 @@ def get_matches():
     out = []
     for r in rows:
         out.append({
-            "id":          r["id"],
-            "group":       r["grp"],
-            "home":        r["home"],
-            "home_flag":   r["home_flag"],
-            "away":        r["away"],
-            "away_flag":   r["away_flag"],
-            "kickoff_utc": r["kickoff_utc"],
-            "venue":       r["venue"],
-            "score_home":  r["score_home"],
-            "score_away":  r["score_away"],
-            "status":      _status(r["kickoff_utc"], r["score_home"], r["score_away"]),
-            "locked":      _is_locked(r["kickoff_utc"]),
+            "id":             r["id"],
+            "group":          r["grp"] or r["stage"].upper(),
+            "stage":          r["stage"],
+            "home":           r["home"],
+            "home_flag":      r["home_flag"],
+            "away":           r["away"],
+            "away_flag":      r["away_flag"],
+            "kickoff_utc":    r["kickoff_utc"],
+            "venue":          r["venue"],
+            "score_home":     r["score_home"],
+            "score_away":     r["score_away"],
+            "penalty_winner": r["penalty_winner"],
+            "status":         _status(r["kickoff_utc"], r["score_home"], r["score_away"]),
+            "locked":         _is_locked(r["kickoff_utc"]),
         })
     return out
 
@@ -424,7 +429,7 @@ def get_standings():
 # Scoring
 # ─────────────────────────────────────────────────────────────────────────────
 def calc_points(ph, pa, ah, aa):
-    """3 pts: exact score. 1 pt: correct outcome. 0: wrong."""
+    """Group stage: 3 pts exact score, 1 pt correct outcome, 0 wrong."""
     def outcome(h, a): return "H" if h > a else ("A" if a > h else "D")
     if ph == ah and pa == aa:
         return 3
@@ -433,52 +438,85 @@ def calc_points(ph, pa, ah, aa):
     return 0
 
 
+def calc_points_knockout(pred_home, pred_away, pred_winner,
+                         score_home, score_away, penalty_winner,
+                         home_team, away_team):
+    """
+    Knockout stage scoring.
+    Returns (base_pts, got_final_winner).
+    base_pts: +2 for exact 90-min score, else 0.
+    got_final_winner: True if user predicted the correct final winner.
+    Bonus (+1 per user who got winner wrong) is computed in get_leaderboard().
+    """
+    base = 2 if (pred_home == score_home and pred_away == score_away) else 0
+
+    # Actual final winner (team name)
+    if score_home > score_away:
+        actual_winner = home_team
+    elif score_away > score_home:
+        actual_winner = away_team
+    else:
+        actual_winner = penalty_winner  # set by admin after penalties
+
+    # User's predicted winner (team name)
+    if pred_home > pred_away:
+        user_winner = home_team
+    elif pred_away > pred_home:
+        user_winner = away_team
+    else:
+        user_winner = pred_winner  # user selected when predicting a draw
+
+    got_winner = (actual_winner is not None and user_winner == actual_winner)
+    return base, got_winner
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Predictions
 # ─────────────────────────────────────────────────────────────────────────────
-def save_prediction(user_id, match_id, pred_home, pred_away):
+def save_prediction(user_id, match_id, pred_home, pred_away, pred_winner=None):
     with _db() as c:
         c.execute("""
-            INSERT INTO predictions(user_id,match_id,pred_home,pred_away)
-            VALUES(%s,%s,%s,%s)
+            INSERT INTO predictions(user_id,match_id,pred_home,pred_away,pred_winner)
+            VALUES(%s,%s,%s,%s,%s)
             ON CONFLICT(user_id,match_id) DO UPDATE SET
               pred_home=EXCLUDED.pred_home,
               pred_away=EXCLUDED.pred_away,
+              pred_winner=EXCLUDED.pred_winner,
               submitted_at=CURRENT_TIMESTAMP
-        """, (user_id, match_id, pred_home, pred_away))
+        """, (user_id, match_id, pred_home, pred_away, pred_winner))
     st.cache_data.clear()
 
 
 def get_user_predictions(user_id):
     with _db() as c:
         c.execute(
-            "SELECT match_id,pred_home,pred_away FROM predictions WHERE user_id=%s",
+            "SELECT match_id,pred_home,pred_away,pred_winner FROM predictions WHERE user_id=%s",
             (user_id,),
         )
         rows = c.fetchall()
-    return {r["match_id"]: (r["pred_home"], r["pred_away"]) for r in rows}
+    return {r["match_id"]: (r["pred_home"], r["pred_away"], r["pred_winner"]) for r in rows}
 
 
 @st.cache_data(ttl=60)
 def get_all_predictions():
-    """Returns {match_id: {username: (pred_home, pred_away)}} for all matches."""
+    """Returns {match_id: {username: (pred_home, pred_away, pred_winner)}} for all matches."""
     with _db() as c:
         c.execute("""
-            SELECT p.match_id, u.username, p.pred_home, p.pred_away
+            SELECT p.match_id, u.username, p.pred_home, p.pred_away, p.pred_winner
             FROM predictions p JOIN users u ON u.id = p.user_id
             WHERE u.verified=1
         """)
         rows = c.fetchall()
     result = {}
     for r in rows:
-        result.setdefault(r["match_id"], {})[r["username"]] = (r["pred_home"], r["pred_away"])
+        result.setdefault(r["match_id"], {})[r["username"]] = (r["pred_home"], r["pred_away"], r["pred_winner"])
     return result
 
 
 def get_all_predictions_for_match(match_id):
     with _db() as c:
         c.execute("""
-            SELECT u.username, p.pred_home, p.pred_away, p.submitted_at
+            SELECT u.username, p.pred_home, p.pred_away, p.pred_winner, p.submitted_at
             FROM predictions p JOIN users u ON u.id=p.user_id
             WHERE p.match_id=%s AND u.verified=1
             ORDER BY u.username
@@ -489,10 +527,10 @@ def get_all_predictions_for_match(match_id):
 
 @st.cache_data(ttl=60)
 def get_all_predictions_all_matches():
-    """Returns {match_id: [{"username":..,"pred_home":..,"pred_away":..}]} in one query."""
+    """Returns {match_id: [{"username":..,"pred_home":..,"pred_away":..,"pred_winner":..}]} in one query."""
     with _db() as c:
         c.execute("""
-            SELECT p.match_id, u.username, p.pred_home, p.pred_away
+            SELECT p.match_id, u.username, p.pred_home, p.pred_away, p.pred_winner
             FROM predictions p JOIN users u ON u.id=p.user_id
             WHERE u.verified=1
             ORDER BY u.username
@@ -501,9 +539,10 @@ def get_all_predictions_all_matches():
     result = {}
     for r in rows:
         result.setdefault(r["match_id"], []).append({
-            "username":  r["username"],
-            "pred_home": r["pred_home"],
-            "pred_away": r["pred_away"],
+            "username":   r["username"],
+            "pred_home":  r["pred_home"],
+            "pred_away":  r["pred_away"],
+            "pred_winner": r["pred_winner"],
         })
     return result
 
@@ -511,11 +550,11 @@ def get_all_predictions_all_matches():
 # ─────────────────────────────────────────────────────────────────────────────
 # Admin: update match result
 # ─────────────────────────────────────────────────────────────────────────────
-def set_match_result(match_id, score_home, score_away):
+def set_match_result(match_id, score_home, score_away, penalty_winner=None):
     with _db() as c:
         c.execute(
-            "UPDATE matches SET score_home=%s, score_away=%s WHERE id=%s",
-            (score_home, score_away, match_id),
+            "UPDATE matches SET score_home=%s, score_away=%s, penalty_winner=%s WHERE id=%s",
+            (score_home, score_away, penalty_winner, match_id),
         )
     st.cache_data.clear()
 
@@ -523,10 +562,21 @@ def set_match_result(match_id, score_home, score_away):
 def clear_match_result(match_id):
     with _db() as c:
         c.execute(
-            "UPDATE matches SET score_home=NULL, score_away=NULL WHERE id=%s",
+            "UPDATE matches SET score_home=NULL, score_away=NULL, penalty_winner=NULL WHERE id=%s",
             (match_id,),
         )
     st.cache_data.clear()
+
+
+def add_knockout_match(stage, home_id, away_id, kickoff_utc, venue_id):
+    with _db() as c:
+        c.execute("""
+            INSERT INTO matches(stage, home_id, away_id, kickoff_utc, venue_id)
+            VALUES(%s,%s,%s,%s,%s) RETURNING id
+        """, (stage, home_id, away_id, kickoff_utc, venue_id))
+        new_id = c.fetchone()["id"]
+    st.cache_data.clear()
+    return new_id
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -543,26 +593,80 @@ def get_leaderboard():
             FROM users WHERE verified=1 ORDER BY username
         """)
         users = c.fetchall()
-        c.execute("SELECT user_id,match_id,pred_home,pred_away FROM predictions")
+        c.execute("SELECT user_id,match_id,pred_home,pred_away,pred_winner FROM predictions")
         all_pred = c.fetchall()
 
+    # Build per-user prediction index
     upreds = {}
     for p in all_pred:
         upreds.setdefault(p["user_id"], []).append(p)
+
+    # Pre-compute knockout bonus info per match:
+    # ko_wrong_count[match_id] = number of users who predicted the WRONG winner (had a prediction)
+    # ko_got_right[match_id]   = set of user_ids who predicted the correct winner
+    ko_wrong_count = {}
+    ko_got_right   = {}
+    for m_id, m in completed.items():
+        if m.get("stage", "group") == "group":
+            continue
+        # Determine actual final winner
+        if m["score_home"] > m["score_away"]:
+            actual_winner = m["home"]
+        elif m["score_away"] > m["score_home"]:
+            actual_winner = m["away"]
+        else:
+            actual_winner = m.get("penalty_winner")
+        if actual_winner is None:
+            continue
+
+        right_set  = set()
+        wrong_cnt  = 0
+        for uid, plist in upreds.items():
+            for p in plist:
+                if p["match_id"] != m_id:
+                    continue
+                if p["pred_home"] > p["pred_away"]:
+                    u_winner = m["home"]
+                elif p["pred_away"] > p["pred_home"]:
+                    u_winner = m["away"]
+                else:
+                    u_winner = p.get("pred_winner")
+                if u_winner == actual_winner:
+                    right_set.add(uid)
+                else:
+                    wrong_cnt += 1
+        ko_got_right[m_id]   = right_set
+        ko_wrong_count[m_id] = wrong_cnt
 
     rows = []
     for u in users:
         preds   = upreds.get(u["id"], [])
         startup = u["startup_points"] or 0
         pts = exact = winner = wrong = 0
+
         for p in preds:
             m = completed.get(p["match_id"])
-            if m:
+            if not m:
+                continue
+            if m.get("stage", "group") == "group":
                 pt = calc_points(p["pred_home"], p["pred_away"], m["score_home"], m["score_away"])
                 pts += pt
                 if pt == 3:   exact  += 1
                 elif pt == 1: winner += 1
                 else:         wrong  += 1
+            else:
+                # Knockout base: +2 for exact 90-min score
+                base, got_win = calc_points_knockout(
+                    p["pred_home"], p["pred_away"], p.get("pred_winner"),
+                    m["score_home"], m["score_away"], m.get("penalty_winner"),
+                    m["home"], m["away"],
+                )
+                bonus = ko_wrong_count.get(m["id"], 0) if u["id"] in ko_got_right.get(m["id"], set()) else 0
+                pts   += base + bonus
+                if base == 2: exact  += 1
+                if got_win:   winner += 1
+                if not got_win and base == 0: wrong += 1
+
         no_pred_on_done = len(completed) - sum(
             1 for p in preds if p["match_id"] in completed
         )

@@ -1,10 +1,18 @@
 import streamlit as st
-from db import (get_matches, set_match_result, clear_match_result,
+from db import (get_matches, get_teams, set_match_result, clear_match_result,
                 get_all_predictions_for_match, get_all_users, set_user_role,
-                set_user_verified, get_pending_users, calc_points, get_leaderboard,
-                set_user_startup_points)
+                set_user_verified, get_pending_users, calc_points,
+                calc_points_knockout, get_leaderboard, set_user_startup_points,
+                add_knockout_match)
 from tz import format_kickoff
-#123
+
+STAGES = ["R32", "R16", "QF", "SF", "3rd", "F"]
+STAGE_LABELS = {
+    "R32": "Round of 32", "R16": "Round of 16",
+    "QF":  "Quarter-Final", "SF": "Semi-Final",
+    "3rd": "Third Place",   "F":  "Final",
+}
+
 
 def render(user: dict):
     if user.get("role") != "admin":
@@ -17,8 +25,9 @@ def render(user: dict):
 
     st.title("Admin Panel")
 
-    tab_results, tab_verify, tab_users, tab_startup = st.tabs([
+    tab_results, tab_knockout, tab_verify, tab_users, tab_startup = st.tabs([
         "Match Results",
+        "Add Knockout Match",
         f"Verify Users{pending_badge}",
         "All Users",
         "Startup Points",
@@ -31,18 +40,16 @@ def render(user: dict):
         locked   = [m for m in matches if m["locked"] and m["status"] != "completed"]
         upcoming = [m for m in matches if not m["locked"]]
 
-        # ── Overdue alert ────────────────────────────────────────────────────
         if locked:
             st.warning(f"⚠️ {len(locked)} match{'es' if len(locked)>1 else ''} overdue — result not entered yet:")
             for m in locked:
                 st.markdown(
                     f"&nbsp;&nbsp;🔴 **{m['home_flag']} {m['home']} vs {m['away']} {m['away_flag']}** "
-                    f"· Group {m['group']} · {format_kickoff(m['kickoff_utc'], tz_offset)}"
+                    f"· {m['group']} · {format_kickoff(m['kickoff_utc'], tz_offset)}"
                 )
             st.markdown("---")
 
         st.subheader("Enter / Update Result")
-        st.caption("Select any match that has kicked off and enter the final score.")
 
         eligible = locked + done
         if not eligible:
@@ -50,12 +57,13 @@ def render(user: dict):
         else:
             options = {
                 f"[{'✅' if m['status']=='completed' else '🔴'}] "
-                f"Group {m['group']} · {m['home']} vs {m['away']} "
+                f"{m['group']} · {m['home']} vs {m['away']} "
                 f"({format_kickoff(m['kickoff_utc'], tz_offset)})": m
                 for m in eligible
             }
             chosen_label = st.selectbox("Match", list(options.keys()))
             m = options[chosen_label]
+            is_knockout  = m.get("stage", "group") != "group"
 
             c1, cdash, c2 = st.columns([2, 0.4, 2])
             with c1:
@@ -72,11 +80,25 @@ def render(user: dict):
                                      value=m["score_away"] if m["score_away"] is not None else 0,
                                      key="admin_sa")
 
+            # Penalty winner — shown only for knockout when scores are equal
+            penalty_winner = None
+            if is_knockout and int(sh) == int(sa):
+                st.info("⚽ Draw after 90 min — select the penalty/ET winner:")
+                pw_options = [m["home"], m["away"]]
+                current_pw = m.get("penalty_winner")
+                pw_idx = pw_options.index(current_pw) if current_pw in pw_options else 0
+                penalty_winner = st.radio(
+                    "Penalty winner", pw_options, index=pw_idx,
+                    horizontal=True, key="admin_pw"
+                )
+
             col_save, col_clear = st.columns(2)
             with col_save:
                 if st.button("Save Result", use_container_width=True):
-                    set_match_result(m["id"], int(sh), int(sa))
-                    st.success(f"Saved: {m['home']} {int(sh)} – {int(sa)} {m['away']}")
+                    pw = penalty_winner if (is_knockout and int(sh) == int(sa)) else None
+                    set_match_result(m["id"], int(sh), int(sa), pw)
+                    st.success(f"Saved: {m['home']} {int(sh)} – {int(sa)} {m['away']}"
+                               + (f" (penalties: {pw})" if pw else ""))
                     st.rerun()
             with col_clear:
                 if st.button("Clear Result", use_container_width=True):
@@ -88,16 +110,33 @@ def render(user: dict):
             preds = get_all_predictions_for_match(m["id"])
             if preds and m["status"] == "completed":
                 st.markdown("**Predictions for this match:**")
-                html = "<table><thead><tr><th style='text-align:left'>Player</th><th>Predicted</th><th>Points</th></tr></thead><tbody>"
-                for p in preds:
-                    pts    = calc_points(p["pred_home"], p["pred_away"], m["score_home"], m["score_away"])
-                    pt_lbl = (f'<b style="color:#C8A951;">+3 Exact</b>' if pts == 3
-                              else (f'<b style="color:#2d6a4f;">+1 Winner</b>' if pts == 1
-                                    else '<span style="color:#888;">0</span>'))
-                    html  += (f"<tr><td style='text-align:left'>{p['username']}</td>"
-                              f"<td>{p['pred_home']} – {p['pred_away']}</td>"
-                              f"<td>{pt_lbl}</td></tr>")
-                html += "</tbody></table>"
+                if is_knockout:
+                    html = "<table><thead><tr><th style='text-align:left'>Player</th><th>Predicted</th><th>Winner pick</th><th>Base</th><th>Got winner?</th></tr></thead><tbody>"
+                    for p in preds:
+                        base, got_win = calc_points_knockout(
+                            p["pred_home"], p["pred_away"], p.get("pred_winner"),
+                            m["score_home"], m["score_away"], m.get("penalty_winner"),
+                            m["home"], m["away"],
+                        )
+                        base_lbl = f'<b style="color:#C8A951;">+2 Exact</b>' if base == 2 else '<span style="color:#888;">0</span>'
+                        win_lbl  = '✅' if got_win else '❌'
+                        pw_lbl   = p.get("pred_winner") or "—"
+                        html += (f"<tr><td style='text-align:left'>{p['username']}</td>"
+                                 f"<td>{p['pred_home']} – {p['pred_away']}</td>"
+                                 f"<td>{pw_lbl}</td>"
+                                 f"<td>{base_lbl}</td><td>{win_lbl}</td></tr>")
+                    html += "</tbody></table>"
+                else:
+                    html = "<table><thead><tr><th style='text-align:left'>Player</th><th>Predicted</th><th>Points</th></tr></thead><tbody>"
+                    for p in preds:
+                        pts    = calc_points(p["pred_home"], p["pred_away"], m["score_home"], m["score_away"])
+                        pt_lbl = (f'<b style="color:#C8A951;">+3 Exact</b>' if pts == 3
+                                  else (f'<b style="color:#2d6a4f;">+1 Winner</b>' if pts == 1
+                                        else '<span style="color:#888;">0</span>'))
+                        html += (f"<tr><td style='text-align:left'>{p['username']}</td>"
+                                 f"<td>{p['pred_home']} – {p['pred_away']}</td>"
+                                 f"<td>{pt_lbl}</td></tr>")
+                    html += "</tbody></table>"
                 st.markdown(html, unsafe_allow_html=True)
             elif preds:
                 st.caption(f"{len(preds)} prediction(s) submitted (result not yet saved).")
@@ -108,8 +147,7 @@ def render(user: dict):
             st.caption("No completed matches yet.")
         else:
             for m in done:
-                winner = (m["home"] if m["score_home"] > m["score_away"]
-                          else (m["away"] if m["score_away"] > m["score_home"] else "Draw"))
+                pw_str = f" · Penalties: **{m['penalty_winner']}**" if m.get("penalty_winner") else ""
                 st.markdown(f"""
                 <div class="match-card completed">
                     <div class="match-teams">
@@ -118,13 +156,76 @@ def render(user: dict):
                         <span>{m['away']} {m['away_flag']}</span>
                     </div>
                     <div class="match-meta">
-                        Group {m['group']} &nbsp;|&nbsp; {format_kickoff(m['kickoff_utc'], tz_offset)}
-                        &nbsp;|&nbsp; {m['venue']}
+                        {m['group']} &nbsp;|&nbsp; {format_kickoff(m['kickoff_utc'], tz_offset)}
+                        &nbsp;|&nbsp; {m['venue']}{pw_str}
                         &nbsp;<span class="badge badge-completed">FT</span>
                     </div>
                 </div>""", unsafe_allow_html=True)
 
-    # ── Tab 2: Verify Users ───────────────────────────────────────────────────
+    # ── Tab 2: Add Knockout Match ─────────────────────────────────────────────
+    with tab_knockout:
+        st.subheader("Add Knockout Stage Match")
+        st.caption("Use this after the group stage ends (June 27) once qualified teams are confirmed.")
+
+        all_teams  = get_teams()
+        all_matches = get_matches()
+        team_names  = sorted([t["name"] for t in all_teams])
+        team_map    = {t["name"]: t["id"] for t in all_teams}
+
+        from db import get_conn
+        import psycopg2.extras
+        conn = get_conn()
+        cur  = conn.cursor()
+        cur.execute("SELECT id, key, name FROM venues ORDER BY name")
+        venues = cur.fetchall()
+        conn.close()
+        venue_options = {v["name"]: v["id"] for v in venues}
+
+        st.markdown("**Existing knockout matches:**")
+        ko_matches = [m for m in all_matches if m.get("stage", "group") != "group"]
+        if not ko_matches:
+            st.caption("None added yet.")
+        else:
+            for m in ko_matches:
+                pw = f" · Pen: {m['penalty_winner']}" if m.get("penalty_winner") else ""
+                score = f"{m['score_home']}–{m['score_away']}" if m["score_home"] is not None else "TBD"
+                st.markdown(
+                    f"**{STAGE_LABELS.get(m['stage'], m['stage'])}** · "
+                    f"{m['home_flag']} {m['home']} {score} {m['away']} {m['away_flag']}"
+                    f" · {format_kickoff(m['kickoff_utc'], tz_offset)}{pw}"
+                )
+
+        st.markdown("---")
+        st.markdown("**Add new match:**")
+
+        ko_col1, ko_col2 = st.columns(2)
+        with ko_col1:
+            stage_lbl  = st.selectbox("Stage", list(STAGE_LABELS.values()), key="ko_stage")
+            stage_key  = [k for k, v in STAGE_LABELS.items() if v == stage_lbl][0]
+            home_name  = st.selectbox("Home team", team_names, key="ko_home")
+        with ko_col2:
+            kickoff_d  = st.date_input("Kickoff date (UTC)", key="ko_date")
+            kickoff_t  = st.time_input("Kickoff time (UTC)", key="ko_time")
+            away_name  = st.selectbox("Away team", team_names, key="ko_away")
+
+        venue_name = st.selectbox("Venue", list(venue_options.keys()), key="ko_venue")
+
+        if st.button("➕ Add Knockout Match", use_container_width=True):
+            if home_name == away_name:
+                st.error("Home and Away teams must be different.")
+            else:
+                kickoff_str = f"{kickoff_d}T{kickoff_t.strftime('%H:%M')}"
+                add_knockout_match(
+                    stage_key,
+                    team_map[home_name],
+                    team_map[away_name],
+                    kickoff_str,
+                    venue_options[venue_name],
+                )
+                st.success(f"Added: {home_name} vs {away_name} — {STAGE_LABELS[stage_key]} — {kickoff_str} UTC")
+                st.rerun()
+
+    # ── Tab 3: Verify Users ───────────────────────────────────────────────────
     with tab_verify:
         st.subheader("Pending Verification")
         pending = get_pending_users()
@@ -176,7 +277,7 @@ def render(user: dict):
                         st.warning(f"Access revoked for {vu['username']}.")
                         st.rerun()
 
-    # ── Tab 3: All Users ──────────────────────────────────────────────────────
+    # ── Tab 4: All Users ──────────────────────────────────────────────────────
     with tab_users:
         st.subheader("All Users")
         users = get_all_users()
@@ -220,7 +321,7 @@ def render(user: dict):
                 st.success(f"{target_name} is now **{new_role}**")
                 st.rerun()
 
-    # ── Tab 4: Startup Points ─────────────────────────────────────────────────
+    # ── Tab 5: Startup Points ─────────────────────────────────────────────────
     with tab_startup:
         st.subheader("Startup Points")
         st.caption(
@@ -229,8 +330,7 @@ def render(user: dict):
         )
 
         completed_matches = [m for m in get_matches() if m["status"] == "completed"]
-        st.info(f"**{len(completed_matches)} matches** have been played so far. "
-                f"Max possible points from those: **{len(completed_matches) * 3} pts** (3 per match).")
+        st.info(f"**{len(completed_matches)} matches** have been played so far.")
 
         all_users  = get_all_users()
         board      = {r["username"]: r for r in get_leaderboard()}
@@ -246,7 +346,6 @@ def render(user: dict):
                     min_value=0, max_value=500,
                     value=startup_pts,
                     key=f"sp_{u['id']}",
-                    help="Points added to this user's leaderboard total (one-time bonus)."
                 )
                 if st.button("Save", key=f"sp_save_{u['id']}", use_container_width=True):
                     set_user_startup_points(u["id"], int(new_pts))
