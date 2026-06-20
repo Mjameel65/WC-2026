@@ -19,20 +19,6 @@ GLOBAL_CSS = """
     --tab-txt: #f0f0f0;
 }
 
-/* ── Light-mode adaptation (browser prefers light) ───────────────────── */
-@media (prefers-color-scheme: light) {
-    :root {
-        color-scheme: light;
-        --bg:      #f4f4f4;
-        --card:    #ffffff;
-        --text:    #111111;
-        --muted:   #555555;
-        --tab-bg:  #e8e8e8;
-        --tab-sel: #8B0000;
-        --tab-txt: #111111;
-    }
-}
-
 html, body, [data-testid="stAppViewContainer"] {
     background-color: var(--bg) !important;
     color: var(--text) !important;
@@ -139,10 +125,11 @@ td {
     border-bottom: 1px solid #222;
     text-align: center;
     font-size: 0.85rem;
+    color: #f0f0f0 !important;
 }
-tr:nth-child(odd) td  { background: #141414; }
-tr:nth-child(even) td { background: #1e1e1e; }
-tr.qualify td  { color: var(--gold); }
+tr:nth-child(odd) td  { background: #141414; color: #f0f0f0 !important; }
+tr:nth-child(even) td { background: #1e1e1e; color: #f0f0f0 !important; }
+tr.qualify td  { color: var(--gold) !important; }
 
 /* ── Hero banner ─────────────────────────────────────────────────────── */
 .hero {
