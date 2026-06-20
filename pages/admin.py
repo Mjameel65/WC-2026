@@ -3,7 +3,7 @@ from db import (get_matches, get_teams, set_match_result, clear_match_result,
                 get_all_predictions_for_match, get_all_users, set_user_role,
                 set_user_verified, get_pending_users, calc_points,
                 calc_points_knockout, get_leaderboard, set_user_startup_points,
-                add_knockout_match)
+                add_knockout_match, reset_user_password)
 from tz import format_kickoff
 
 STAGES = ["R32", "R16", "QF", "SF", "3rd", "F"]
@@ -308,10 +308,31 @@ def render(user: dict):
         st.markdown(html, unsafe_allow_html=True)
 
         st.markdown("---")
-        st.subheader("Change User Role")
+        st.subheader("Reset User Password")
         other_users = [u for u in users if u["username"] != user["username"]]
         if other_users:
-            target_name = st.selectbox("User", [u["username"] for u in other_users])
+            rp_name = st.selectbox("User", [u["username"] for u in other_users], key="rp_user")
+            rp_user = next(u for u in other_users if u["username"] == rp_name)
+            rp_col1, rp_col2 = st.columns(2)
+            with rp_col1:
+                new_pw  = st.text_input("New password", type="password", key="rp_pw")
+            with rp_col2:
+                conf_pw = st.text_input("Confirm password", type="password", key="rp_conf")
+            if st.button("Reset Password", use_container_width=True, key="rp_btn"):
+                if not new_pw:
+                    st.error("Password cannot be empty.")
+                elif len(new_pw) < 6:
+                    st.error("Password must be at least 6 characters.")
+                elif new_pw != conf_pw:
+                    st.error("Passwords do not match.")
+                else:
+                    reset_user_password(rp_user["id"], new_pw)
+                    st.success(f"Password for **{rp_name}** has been reset.")
+
+        st.markdown("---")
+        st.subheader("Change User Role")
+        if other_users:
+            target_name = st.selectbox("User", [u["username"] for u in other_users], key="role_user")
             target_u    = next(u for u in other_users if u["username"] == target_name)
             new_role    = st.radio("New role", ["user", "admin"],
                                    index=0 if target_u["role"] == "user" else 1,
