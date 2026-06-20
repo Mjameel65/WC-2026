@@ -175,18 +175,15 @@ def render(user: dict):
                 pw_html = (f"<div style='font-size:.58rem;color:#888;'>→ {pw}</div>" if (is_ko and pw and ph == pa) else "")
 
                 me_border = f"2px solid #C8A951" if is_me else f"1px solid {border}"
-                col.markdown(f"""
-                <div style='background:{bg};border-radius:8px;padding:.5rem .6rem;
-                            border:{me_border};text-align:center;margin-bottom:.5rem;'>
-                    <div style='font-size:.68rem;font-weight:600;
-                                color:{"#C8A951" if is_me else "#aaa"};'>{short}</div>
-                    <div style='font-size:1.05rem;font-weight:700;color:#fff;margin:.2rem 0;'>
-                        {ph} – {pa}
-                    </div>
-                    {pw_html}
-                    {label_html}
-                    {pts_html}
-                </div>
-                """, unsafe_allow_html=True)
+                col.markdown(
+                    f"<div style='background:{bg};border-radius:8px;padding:.5rem .6rem;"
+                    f"border:{me_border};text-align:center;margin-bottom:.5rem;'>"
+                    f"<div style='font-size:.68rem;font-weight:600;"
+                    f"color:{'#C8A951' if is_me else '#aaa'};'>{short}</div>"
+                    f"<div style='font-size:1.05rem;font-weight:700;color:#fff;margin:.2rem 0;'>{ph} – {pa}</div>"
+                    f"{pw_html}{label_html}{pts_html}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
         st.markdown("<div style='margin-bottom:.8rem'></div>", unsafe_allow_html=True)
