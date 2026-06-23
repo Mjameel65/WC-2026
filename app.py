@@ -21,6 +21,7 @@ import pages.leaderboard as pg_leaderboard
 import pages.admin       as pg_admin
 import pages.profile     as pg_profile
 import pages.dashboard   as pg_dashboard
+import pages.analysis    as pg_analysis
 
 inject_css()
 
@@ -218,6 +219,7 @@ NAV = {
     "Users Predictions": "👁️",
     "Scores":            "🏅",
     "Leaderboard":       "📊",
+    "Analysis":          "📈",
 }
 if is_admin:
     NAV["Admin"] = "⚙️"
@@ -248,6 +250,7 @@ page_renderers = {
     "Users Predictions": pg_dashboard.render,
     "Scores":            pg_scores.render,
     "Leaderboard":       pg_leaderboard.render,
+    "Analysis":          pg_analysis.render,
 }
 if is_admin:
     page_renderers["Admin"] = pg_admin.render
