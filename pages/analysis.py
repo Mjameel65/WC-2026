@@ -3,9 +3,35 @@ import plotly.graph_objects as go
 from db import get_matches, get_verified_users, get_all_predictions_all_matches, calc_points, calc_points_knockout
 
 
+_PALETTE = [
+    "#C8A951","#2d9e6b","#4e8ef7","#e06c75","#56b6c2",
+    "#d19a66","#c678dd","#98c379","#e5c07b","#61afef",
+    "#be5046","#5c6370","#abb2bf","#e06c75","#528bff",
+    "#7c6f64","#fabd2f","#8ec07c","#83a598","#d3869b",
+    "#b8bb26","#fb4934","#fe8019","#689d6a","#458588",
+]
+
+OUTCOME_COLOR = {
+    "exact":  "#C8A951",
+    "winner": "#2d9e6b",
+    "wrong":  "#7a1c1c",
+    "none":   "#1e1e1e",
+}
+
+
+def _calc_outcome(pts, is_ko):
+    if pts is None:
+        return "none"
+    max_pts = 2 if is_ko else 3
+    if pts == max_pts:
+        return "exact"
+    if pts > 0:
+        return "winner"
+    return "wrong"
+
+
 def render(user: dict):
     st.title("Analysis")
-    st.caption("Points earned per user per match.")
 
     matches   = get_matches()
     done      = [m for m in matches if m["status"] == "completed"]
@@ -20,9 +46,9 @@ def render(user: dict):
 
     _all = get_all_predictions_all_matches()
 
-    # ── Build points matrix & filter to matches with at least one prediction ──
-    # points[uname][match_id] = points earned (None = no pick)
-    points_data = {u: {} for u in all_users}
+    # ── Build points & outcome per user per match ─────────────────────────────
+    pts_matrix     = {u: {} for u in all_users}
+    outcome_matrix = {u: {} for u in all_users}
 
     active_matches = []
     for m in done:
@@ -35,20 +61,21 @@ def render(user: dict):
         for uname in all_users:
             p = pred_by_user.get(uname)
             if p is None:
-                points_data[uname][mid] = None
+                pts_matrix[uname][mid]     = None
+                outcome_matrix[uname][mid] = "none"
                 continue
             has_any = True
             ph, pa = p["pred_home"], p["pred_away"]
             ah, aa = m["score_home"], m["score_away"]
             if is_ko:
-                base, _ = calc_points_knockout(
+                pts, _ = calc_points_knockout(
                     ph, pa, p.get("pred_winner"),
-                    ah, aa, m.get("penalty_winner"),
-                    m["home"], m["away"],
+                    ah, aa, m.get("penalty_winner"), m["home"], m["away"],
                 )
-                points_data[uname][mid] = base
             else:
-                points_data[uname][mid] = calc_points(ph, pa, ah, aa)
+                pts = calc_points(ph, pa, ah, aa)
+            pts_matrix[uname][mid]     = pts
+            outcome_matrix[uname][mid] = _calc_outcome(pts, is_ko)
 
         if has_any:
             active_matches.append(m)
@@ -57,72 +84,44 @@ def render(user: dict):
         st.info("No predictions submitted yet.")
         return
 
-    # ── Match x-axis labels ───────────────────────────────────────────────────
+    short_names = {
+        u: (u.split()[1] if len(u.split()) > 1 else u)
+        for u in all_users
+    }
+
     match_labels = []
     for m in active_matches:
         home = m["home"].split()[-1][:3].upper()
         away = m["away"].split()[-1][:3].upper()
-        match_labels.append(f"{home} v {away}")
+        match_labels.append(f"{home}-{away}")
 
-    # ── Colour palette per user ───────────────────────────────────────────────
-    palette = [
-        "#C8A951", "#2d9e6b", "#4e8ef7", "#e06c75",
-        "#56b6c2", "#d19a66", "#c678dd", "#98c379",
-    ]
+    # ══════════════════════════════════════════════════════════════════════════
+    # Chart 1 — Cumulative points line chart
+    # ══════════════════════════════════════════════════════════════════════════
+    st.subheader("Cumulative Points Race")
 
-    short_names = [
-        u.split()[1] if len(u.split()) > 1 else u
-        for u in all_users
-    ]
-
-    # ── Grouped bar chart ─────────────────────────────────────────────────────
-    fig = go.Figure()
-
-    for i, (uname, short) in enumerate(zip(all_users, short_names)):
-        color = palette[i % len(palette)]
-        bar_values  = []
-        bar_colors  = []
-        hover_texts = []
-
+    fig_line = go.Figure()
+    for i, uname in enumerate(all_users):
+        color  = _PALETTE[i % len(_PALETTE)]
+        short  = short_names[uname]
+        cumulative = []
+        total = 0
         for m in active_matches:
-            mid = m["id"]
-            pts = points_data[uname].get(mid)
-            is_ko = m.get("stage", "group") != "group"
-            max_pts = 2 if is_ko else 3
+            p = pts_matrix[uname].get(m["id"])
+            total += p if p is not None else 0
+            cumulative.append(total)
 
-            if pts is None:
-                bar_values.append(0)
-                bar_colors.append("#2a2a2a")
-                hover_texts.append("No pick")
-            elif pts == max_pts:
-                bar_values.append(pts)
-                bar_colors.append("#C8A951")   # gold — exact
-                hover_texts.append(f"Exact ✓  +{pts} pts")
-            elif pts > 0:
-                bar_values.append(pts)
-                bar_colors.append("#2d9e6b")   # green — winner
-                hover_texts.append(f"Winner ✓  +{pts} pts")
-            else:
-                bar_values.append(0.15)        # tiny stub so bar is visible
-                bar_colors.append("#5c2222")   # dark red — wrong
-                hover_texts.append("Wrong ✗  0 pts")
-
-        fig.add_trace(go.Bar(
-            name=short,
+        fig_line.add_trace(go.Scatter(
             x=match_labels,
-            y=bar_values,
-            marker_color=bar_colors,
-            text=[f"+{v}" if v > 0.15 else "✗" for v in bar_values],
-            textposition="outside",
-            textfont=dict(size=10, color="#f0f0f0"),
-            hovertext=hover_texts,
-            hovertemplate=f"<b>{short}</b><br>%{{x}}<br>%{{hovertext}}<extra></extra>",
-            legendgroup=short,
-            showlegend=True,
+            y=cumulative,
+            mode="lines+markers",
+            name=short,
+            line=dict(color=color, width=2),
+            marker=dict(size=6, color=color),
+            hovertemplate=f"<b>{short}</b><br>After %{{x}}: <b>%{{y}} pts</b><extra></extra>",
         ))
 
-    fig.update_layout(
-        barmode="group",
+    fig_line.update_layout(
         paper_bgcolor="#0a0a0a",
         plot_bgcolor="#0a0a0a",
         font=dict(color="#f0f0f0", size=11),
@@ -130,61 +129,131 @@ def render(user: dict):
             orientation="h",
             yanchor="bottom", y=1.02,
             xanchor="center", x=0.5,
-            font=dict(size=11),
+            font=dict(size=10),
             bgcolor="rgba(0,0,0,0)",
+            itemwidth=40,
         ),
         xaxis=dict(
-            tickangle=-40,
-            tickfont=dict(size=10),
-            gridcolor="#1a1a1a",
-            linecolor="#333",
+            tickangle=-40, tickfont=dict(size=9),
+            gridcolor="#1a1a1a", linecolor="#333",
         ),
         yaxis=dict(
-            title="Points",
-            range=[0, 4],
-            tickvals=[0, 1, 2, 3],
-            gridcolor="#1a1a1a",
-            linecolor="#333",
+            title="Total Points",
+            gridcolor="#1a1a1a", linecolor="#333",
+            zeroline=False,
         ),
-        height=480,
-        margin=dict(l=10, r=10, t=60, b=80),
-        bargap=0.18,
-        bargroupgap=0.05,
+        height=400,
+        margin=dict(l=10, r=10, t=80, b=80),
+        hovermode="x unified",
     )
+    st.plotly_chart(fig_line, use_container_width=True)
 
-    st.plotly_chart(fig, use_container_width=True)
+    # ══════════════════════════════════════════════════════════════════════════
+    # Chart 2 — Outcome dot grid (users × matches)
+    # ══════════════════════════════════════════════════════════════════════════
+    st.subheader("Prediction Outcomes Grid")
+    st.caption("🟡 Exact &nbsp; 🟢 Correct winner &nbsp; 🔴 Wrong &nbsp; ⬛ No pick")
 
-    # ── Accuracy summary cards ────────────────────────────────────────────────
+    # Build scatter dot chart: one dot per (user, match)
+    dot_x, dot_y, dot_colors, dot_hover = [], [], [], []
+
+    outcome_label = {
+        "exact":  "Exact ✓",
+        "winner": "Winner ✓",
+        "wrong":  "Wrong ✗",
+        "none":   "No pick",
+    }
+
+    for ui, uname in enumerate(all_users):
+        short = short_names[uname]
+        for mi, m in enumerate(active_matches):
+            outcome = outcome_matrix[uname][m["id"]]
+            dot_x.append(mi)
+            dot_y.append(ui)
+            dot_colors.append(OUTCOME_COLOR[outcome])
+            dot_hover.append(
+                f"<b>{short}</b><br>{match_labels[mi]}<br>{outcome_label[outcome]}"
+            )
+
+    fig_grid = go.Figure(go.Scatter(
+        x=dot_x,
+        y=dot_y,
+        mode="markers",
+        marker=dict(
+            color=dot_colors,
+            size=14,
+            symbol="square",
+            line=dict(width=0),
+        ),
+        hovertext=dot_hover,
+        hovertemplate="%{hovertext}<extra></extra>",
+        showlegend=False,
+    ))
+
+    fig_grid.update_layout(
+        paper_bgcolor="#0a0a0a",
+        plot_bgcolor="#0a0a0a",
+        font=dict(color="#f0f0f0", size=10),
+        xaxis=dict(
+            tickvals=list(range(len(active_matches))),
+            ticktext=match_labels,
+            tickangle=-45,
+            tickfont=dict(size=9),
+            gridcolor="#111",
+            zeroline=False,
+            range=[-0.5, len(active_matches) - 0.5],
+        ),
+        yaxis=dict(
+            tickvals=list(range(len(all_users))),
+            ticktext=[short_names[u] for u in all_users],
+            tickfont=dict(size=10),
+            gridcolor="#111",
+            zeroline=False,
+            range=[-0.5, len(all_users) - 0.5],
+            autorange="reversed",
+        ),
+        height=max(300, len(all_users) * 32 + 120),
+        margin=dict(l=10, r=10, t=20, b=80),
+    )
+    st.plotly_chart(fig_grid, use_container_width=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Accuracy summary cards
+    # ══════════════════════════════════════════════════════════════════════════
     st.markdown("---")
     st.subheader("Accuracy Summary")
 
-    cols = st.columns(len(all_users))
-    for col, uname in zip(cols, all_users):
-        vals    = [points_data[uname].get(m["id"]) for m in active_matches]
-        played  = [v for v in vals if v is not None]
-        is_ko_map = {m["id"]: m.get("stage", "group") != "group" for m in active_matches}
-        exact   = sum(1 for m in active_matches if points_data[uname].get(m["id"]) == (2 if is_ko_map[m["id"]] else 3))
-        winner  = sum(1 for m in active_matches
-                      if points_data[uname].get(m["id"]) not in (None, 0)
-                      and points_data[uname].get(m["id"]) != (2 if is_ko_map[m["id"]] else 3))
-        wrong   = sum(1 for v in vals if v == 0)
-        no_pick = sum(1 for v in vals if v is None)
+    is_ko_map = {m["id"]: m.get("stage", "group") != "group" for m in active_matches}
+    cols = st.columns(min(len(all_users), 8))
+    sorted_users = sorted(
+        all_users,
+        key=lambda u: -sum(v for v in pts_matrix[u].values() if v is not None)
+    )
+    for idx, uname in enumerate(sorted_users):
+        col   = cols[idx % len(cols)]
+        short = short_names[uname]
+        vals  = outcome_matrix[uname]
+        played  = [v for v in vals.values() if v != "none"]
+        exact   = sum(1 for v in vals.values() if v == "exact")
+        winner  = sum(1 for v in vals.values() if v == "winner")
+        wrong   = sum(1 for v in vals.values() if v == "wrong")
+        no_pick = sum(1 for v in vals.values() if v == "none")
         correct = exact + winner
         pct     = round(correct / len(played) * 100) if played else 0
-        short   = uname.split()[1] if len(uname.split()) > 1 else uname
+        total_pts = sum(v for v in pts_matrix[uname].values() if v is not None)
         is_me   = uname == user["username"]
         bg      = "linear-gradient(135deg,#8B0000,#3d0000)" if is_me else "#1a1a1a"
         border  = "2px solid #C8A951" if is_me else "1px solid #333"
 
         col.markdown(
-            f"<div style='background:{bg};border-radius:10px;padding:.8rem;"
-            f"text-align:center;border:{border};'>"
-            f"<div style='font-size:.72rem;color:#C8A951;font-weight:700;'>{short}</div>"
-            f"<div style='font-size:2rem;font-weight:900;color:#fff;line-height:1.1;'>{pct}%</div>"
-            f"<div style='font-size:.65rem;color:#aaa;margin-bottom:.3rem;'>accuracy</div>"
-            f"<div style='font-size:.68rem;color:#C8A951;'>{exact} exact</div>"
-            f"<div style='font-size:.68rem;color:#2d9e6b;'>{winner} winner</div>"
-            f"<div style='font-size:.68rem;color:#888;'>{wrong} wrong · {no_pick} no pick</div>"
+            f"<div style='background:{bg};border-radius:10px;padding:.7rem;"
+            f"text-align:center;border:{border};margin-bottom:.5rem;'>"
+            f"<div style='font-size:.7rem;color:#C8A951;font-weight:700;'>{short}</div>"
+            f"<div style='font-size:1.6rem;font-weight:900;color:#fff;line-height:1.1;'>{pct}%</div>"
+            f"<div style='font-size:.6rem;color:#aaa;'>{total_pts} pts total</div>"
+            f"<div style='font-size:.62rem;color:#C8A951;margin-top:.3rem;'>{exact} exact</div>"
+            f"<div style='font-size:.62rem;color:#2d9e6b;'>{winner} winner</div>"
+            f"<div style='font-size:.62rem;color:#888;'>{wrong} wrong · {no_pick} skip</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
