@@ -3,7 +3,7 @@ from db import (get_matches, get_teams, set_match_result, clear_match_result,
                 get_all_predictions_for_match, get_all_users, set_user_role,
                 set_user_verified, get_pending_users, calc_points,
                 calc_points_knockout, get_leaderboard, set_user_startup_points,
-                add_knockout_match, reset_user_password)
+                add_knockout_match, reset_user_password, save_prediction)
 from tz import format_kickoff
 
 STAGES = ["R32", "R16", "QF", "SF", "3rd", "F"]
@@ -25,9 +25,10 @@ def render(user: dict):
 
     st.title("Admin Panel")
 
-    tab_results, tab_knockout, tab_verify, tab_users, tab_startup = st.tabs([
+    tab_results, tab_knockout, tab_setpred, tab_verify, tab_users, tab_startup = st.tabs([
         "Match Results",
         "Add Knockout Match",
+        "Set Prediction",
         f"Verify Users{pending_badge}",
         "All Users",
         "Startup Points",
@@ -225,7 +226,56 @@ def render(user: dict):
                 st.success(f"Added: {home_name} vs {away_name} — {STAGE_LABELS[stage_key]} — {kickoff_str} UTC")
                 st.rerun()
 
-    # ── Tab 3: Verify Users ───────────────────────────────────────────────────
+    # ── Tab 3: Set Prediction (admin override) ────────────────────────────────
+    with tab_setpred:
+        st.subheader("Set / Override Prediction")
+        st.caption("Enter or overwrite a prediction for any user on any match, regardless of lock status.")
+
+        all_matches  = get_matches()
+        all_users_sp = get_all_users()
+        verified_sp  = [u for u in all_users_sp if u.get("verified") or u.get("verified") == 1]
+
+        if not verified_sp:
+            st.info("No verified users yet.")
+        else:
+            sp_uname   = st.selectbox("User", [u["username"] for u in verified_sp], key="sp_user")
+            sp_user_obj = next(u for u in verified_sp if u["username"] == sp_uname)
+
+            match_opts = [
+                f"[{m.get('group','?')}] {m['home']} vs {m['away']}  ({m['kickoff_utc'][:10]})"
+                for m in all_matches
+            ]
+            sp_match_idx = st.selectbox("Match", range(len(match_opts)),
+                                        format_func=lambda i: match_opts[i], key="sp_match")
+            sp_match = all_matches[sp_match_idx]
+            is_ko_sp = sp_match.get("stage", "group") != "group"
+
+            c1, c2 = st.columns(2)
+            with c1:
+                sp_home = st.number_input(f"{sp_match['home']} goals", min_value=0, max_value=20,
+                                          value=1, step=1, key="sp_home")
+            with c2:
+                sp_away = st.number_input(f"{sp_match['away']} goals", min_value=0, max_value=20,
+                                          value=0, step=1, key="sp_away")
+
+            sp_winner = None
+            if is_ko_sp and sp_home == sp_away:
+                sp_winner = st.radio(
+                    "Penalty winner (draw score — knockout)",
+                    [sp_match["home"], sp_match["away"]],
+                    horizontal=True, key="sp_winner",
+                )
+            elif is_ko_sp:
+                sp_winner = sp_match["home"] if sp_home > sp_away else sp_match["away"]
+
+            if st.button("Save Prediction", use_container_width=True, key="sp_save"):
+                save_prediction(sp_user_obj["id"], sp_match["id"], sp_home, sp_away, sp_winner)
+                st.success(
+                    f"Saved: **{sp_uname}** → {sp_match['home']} {sp_home}–{sp_away} {sp_match['away']}"
+                    + (f" (pen: {sp_winner})" if sp_winner and sp_home == sp_away else "")
+                )
+
+    # ── Tab 4: Verify Users ───────────────────────────────────────────────────
     with tab_verify:
         st.subheader("Pending Verification")
         pending = get_pending_users()
