@@ -1,6 +1,6 @@
 import streamlit as st
 from datetime import datetime, timezone, timedelta, date
-from db import get_matches, get_verified_users, get_all_predictions, calc_points
+from db import get_matches, get_verified_users, get_all_predictions, calc_points, calc_points_knockout
 from tz import format_kickoff, local_date
 
 
@@ -118,6 +118,23 @@ def render(user: dict):
         </div>
         """, unsafe_allow_html=True)
 
+        # ── Pre-compute knockout bonus for this match ─────────────────────────
+        is_ko = m.get("stage", "group") != "group"
+        ko_wrong_count = 0
+        ko_right_users = set()
+        if is_done and is_ko:
+            for uname_i, pred_i in preds.items():
+                ph_i, pa_i, pw_i = pred_i if len(pred_i) == 3 else (*pred_i, None)
+                _, got_w = calc_points_knockout(
+                    ph_i, pa_i, pw_i,
+                    m["score_home"], m["score_away"], m.get("penalty_winner"),
+                    m["home"], m["away"],
+                )
+                if got_w:
+                    ko_right_users.add(uname_i)
+                else:
+                    ko_wrong_count += 1
+
         # ── Predictions grid ──────────────────────────────────────────────────
         if not users:
             st.caption("No users yet.")
@@ -141,22 +158,22 @@ def render(user: dict):
                 """, unsafe_allow_html=True)
             else:
                 ph, pa, pw = pred if len(pred) == 3 else (*pred, None)
-                is_ko = m.get("stage", "group") != "group"
                 if is_done:
                     if is_ko:
-                        from db import calc_points_knockout
                         base, got_win = calc_points_knockout(
                             ph, pa, pw,
                             m["score_home"], m["score_away"], m.get("penalty_winner"),
                             m["home"], m["away"],
                         )
+                        bonus = ko_wrong_count if uname in ko_right_users else 0
+                        total = base + bonus
                         if base == 2:
                             bg, border, pt_color, label = "#1a1500", "#C8A951", "#C8A951", "Exact ✓"
                         elif got_win:
                             bg, border, pt_color, label = "#0a1a10", "#2d9e6b", "#2d9e6b", "Winner ✓"
                         else:
                             bg, border, pt_color, label = "#111", "#333", "#666", "Wrong ✗"
-                        pts_html   = f"<div style='font-size:1.1rem;font-weight:900;color:{pt_color};'>+{base}</div>"
+                        pts_html   = f"<div style='font-size:1.1rem;font-weight:900;color:{pt_color};'>+{total}</div>"
                         label_html = f"<div style='font-size:.62rem;color:{pt_color};font-weight:600;'>{label}</div>"
                     else:
                         pts = calc_points(ph, pa, m["score_home"], m["score_away"])
