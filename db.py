@@ -487,6 +487,7 @@ def save_prediction(user_id, match_id, pred_home, pred_away, pred_winner=None):
     st.cache_data.clear()
 
 
+@st.cache_data(ttl=60)
 def get_user_predictions(user_id):
     with _db() as c:
         c.execute(
@@ -774,6 +775,7 @@ def set_user_verified(user_id, verified: bool):
     st.cache_data.clear()
 
 
+@st.cache_data(ttl=60)
 def get_pending_users():
     with _db() as c:
         c.execute(
