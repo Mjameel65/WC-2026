@@ -6,6 +6,7 @@ from tz import format_kickoff, local_date
 
 def render(user: dict):
     tz_offset = user.get("tz_offset") or 3
+    is_admin  = user.get("role") == "admin"
 
     st.title("Users Predictions")
     st.caption("All users' predictions — read only.")
@@ -145,6 +146,19 @@ def render(user: dict):
             pred  = preds.get(uname)
             short = uname.split()[1] if len(uname.split()) > 1 else uname
             is_me = uname == user["username"]
+
+            # Hide other users' picks before the match starts (non-admins only)
+            if not is_admin and not is_locked and not is_done and not is_me:
+                col.markdown(
+                    f"<div style='background:#111;border-radius:8px;padding:.5rem .6rem;"
+                    f"border:1px solid #1e1e1e;text-align:center;margin-bottom:.5rem;'>"
+                    f"<div style='font-size:.68rem;color:#555;font-weight:600;'>{short}</div>"
+                    f"<div style='font-size:1rem;color:#333;margin:.25rem 0;'>🔒</div>"
+                    f"<div style='font-size:.6rem;color:#333;'>After kickoff</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                continue
 
             if pred is None:
                 col.markdown(f"""
