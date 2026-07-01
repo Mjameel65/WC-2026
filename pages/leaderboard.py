@@ -6,6 +6,7 @@ from tz import format_kickoff, local_date
 
 def render(user: dict):
     tz_offset = user.get("tz_offset") or 3
+    is_admin  = user.get("role") == "admin"
 
     st.title("Leaderboard")
     st.caption("**3 pts** exact score · **1 pt** correct outcome · **0** wrong")
@@ -160,6 +161,22 @@ def render(user: dict):
 
         with st.expander(title, expanded=False):
             is_ko = m.get("stage", "group") != "group"
+
+            # Non-admins cannot see others' picks before kickoff
+            if not is_admin and not is_locked and not is_done:
+                my_pred = pred_map.get(me)
+                if my_pred:
+                    if is_ko:
+                        st.markdown(
+                            f"**Your pick:** {my_pred['pred_home']} – {my_pred['pred_away']}"
+                            + (f"  →  {my_pred.get('pred_winner','')}" if my_pred.get('pred_winner') else "")
+                        )
+                    else:
+                        st.markdown(f"**Your pick:** {my_pred['pred_home']} – {my_pred['pred_away']}")
+                else:
+                    st.caption("You haven't submitted a prediction for this match.")
+                st.caption("🔒 Other players' predictions are hidden until kickoff.")
+                continue
 
             if is_ko:
                 mhtml = """<table><thead><tr>
