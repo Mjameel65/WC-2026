@@ -410,6 +410,8 @@ def get_standings():
     for m in matches:
         if m["status"] != "completed":
             continue
+        if m.get("stage", "group") != "group":
+            continue
         h, a, sh, sa = m["home"], m["away"], m["score_home"], m["score_away"]
         for t in (h, a):
             if t not in s:

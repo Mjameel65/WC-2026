@@ -10,7 +10,7 @@ st.set_page_config(
 
 from style import inject_css
 from db import (init_schema, seed_data, login_user, register_user,
-                create_session, get_session_user, delete_session)
+                create_session, get_session_user, delete_session, get_leaderboard)
 import pages.home        as pg_home
 import pages.schedule    as pg_schedule
 import pages.groups      as pg_groups
@@ -176,9 +176,20 @@ div[data-testid="stHorizontalBlock"].topbar-btns {
 </style>
 """, unsafe_allow_html=True)
 
+_board  = get_leaderboard()
+_leader = _board[0] if _board else None
+_leader_html = (
+    f"<span style='color:#C8A951;font-size:.75rem;font-weight:700;"
+    f"background:rgba(200,169,81,.12);padding:.15rem .55rem;"
+    f"border-radius:99px;border:1px solid #C8A951;margin-right:.8rem;'>"
+    f"🏆 {_leader['username']} &nbsp;·&nbsp; {_leader['points']} pts</span>"
+    if _leader else ""
+)
+
 st.markdown(f"""
 <div id="wc-topbar">
     <span class="title">&#x26BD; World Cup 2026</span>
+    {_leader_html}
     <span class="tz">🕐 {tz_name}</span>
 </div>
 <div id="wc-topbar-spacer"></div>
