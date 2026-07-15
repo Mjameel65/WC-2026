@@ -1,6 +1,22 @@
 import streamlit as st
+from datetime import datetime, timezone
 from db import get_matches, get_user_predictions, save_prediction, calc_points, calc_points_knockout
 from tz import format_kickoff
+
+
+def _countdown(kickoff_utc: str) -> str:
+    try:
+        kickoff = datetime.fromisoformat(kickoff_utc).replace(tzinfo=timezone.utc)
+        secs = int((kickoff - datetime.now(timezone.utc)).total_seconds())
+        if secs <= 0:
+            return ""
+        h, rem = divmod(secs, 3600)
+        m = rem // 60
+        if h >= 48:
+            return f"⏱ {h//24}d {h%24}h to lock"
+        return f"⏱ {h}h {m:02d}m to lock" if h else f"⏱ {m}m to lock"
+    except Exception:
+        return ""
 
 
 def _pts_badge_group(pts):
@@ -57,9 +73,11 @@ def render(user: dict):
             existing = user_preds.get(m["id"])
             ex_h = existing[0] if existing else 0
             ex_a = existing[1] if existing else 0
+            cd = _countdown(m["kickoff_utc"])
             with st.expander(
                 f"Group {m['group']} · {m['home_flag']} {m['home']} vs {m['away']} {m['away_flag']}"
-                f"  —  {format_kickoff(m['kickoff_utc'], tz_offset)}",
+                f"  —  {format_kickoff(m['kickoff_utc'], tz_offset)}"
+                + (f"  {cd}" if cd else ""),
                 expanded=False,
             ):
                 st.caption(m["venue"])
@@ -79,7 +97,6 @@ def render(user: dict):
                 if st.button(lbl, key=f"btn_{m['id']}", use_container_width=True):
                     save_prediction(user["id"], m["id"], int(ph), int(pa))
                     st.success(f"Saved: {m['home']} {int(ph)} – {int(pa)} {m['away']}")
-                    st.rerun()
                 if existing:
                     st.caption(f"Your prediction: **{ex_h} – {ex_a}**")
 
@@ -93,9 +110,11 @@ def render(user: dict):
             ex_a       = existing[1] if existing else 0
             ex_winner  = existing[2] if existing else None
             stage_lbl  = {"R32":"Round of 32","R16":"Round of 16","QF":"QF","SF":"SF","3rd":"3rd Place","F":"Final"}.get(m["stage"], m["stage"])
+            cd = _countdown(m["kickoff_utc"])
             with st.expander(
                 f"{stage_lbl} · {m['home_flag']} {m['home']} vs {m['away']} {m['away_flag']}"
-                f"  —  {format_kickoff(m['kickoff_utc'], tz_offset)}",
+                f"  —  {format_kickoff(m['kickoff_utc'], tz_offset)}"
+                + (f"  {cd}" if cd else ""),
                 expanded=False,
             ):
                 st.caption(m["venue"])
@@ -131,7 +150,6 @@ def render(user: dict):
                     save_prediction(user["id"], m["id"], int(ph), int(pa), pred_winner)
                     st.success(f"Saved: {m['home']} {int(ph)} – {int(pa)} {m['away']}"
                                + (f" · Winner: {pred_winner}" if int(ph) == int(pa) else ""))
-                    st.rerun()
                 if existing:
                     pw_show = f" · Winner pick: **{ex_winner}**" if ex_winner else ""
                     st.caption(f"Your prediction: **{ex_h} – {ex_a}**{pw_show}")

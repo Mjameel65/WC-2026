@@ -100,12 +100,10 @@ def render(user: dict):
                     set_match_result(m["id"], int(sh), int(sa), pw)
                     st.success(f"Saved: {m['home']} {int(sh)} – {int(sa)} {m['away']}"
                                + (f" (penalties: {pw})" if pw else ""))
-                    st.rerun()
             with col_clear:
                 if st.button("Clear Result", use_container_width=True):
                     clear_match_result(m["id"])
                     st.warning("Result cleared.")
-                    st.rerun()
 
             # Show predictions for this match
             preds = get_all_predictions_for_match(m["id"])
@@ -224,7 +222,6 @@ def render(user: dict):
                     venue_options[venue_name],
                 )
                 st.success(f"Added: {home_name} vs {away_name} — {STAGE_LABELS[stage_key]} — {kickoff_str} UTC")
-                st.rerun()
 
     # ── Tab 3: Set Prediction (admin override) ────────────────────────────────
     with tab_setpred:
@@ -297,12 +294,10 @@ def render(user: dict):
                     if st.button("✅ Approve", key=f"approve_{pu['id']}", use_container_width=True):
                         set_user_verified(pu["id"], True)
                         st.success(f"{pu['username']} approved!")
-                        st.rerun()
                 with col_reject:
                     if st.button("❌ Reject", key=f"reject_{pu['id']}", use_container_width=True):
                         set_user_verified(pu["id"], False)
                         st.warning(f"{pu['username']} rejected.")
-                        st.rerun()
 
         st.markdown("---")
         st.subheader("Verified Users")
@@ -325,7 +320,6 @@ def render(user: dict):
                     if st.button("Revoke", key=f"revoke_{vu['id']}", use_container_width=True):
                         set_user_verified(vu["id"], False)
                         st.warning(f"Access revoked for {vu['username']}.")
-                        st.rerun()
 
     # ── Tab 4: All Users ──────────────────────────────────────────────────────
     with tab_users:
@@ -390,7 +384,6 @@ def render(user: dict):
             if st.button("Update Role", use_container_width=True):
                 set_user_role(target_u["id"], new_role)
                 st.success(f"{target_name} is now **{new_role}**")
-                st.rerun()
 
     # ── Tab 5: Startup Points ─────────────────────────────────────────────────
     with tab_startup:
@@ -421,4 +414,3 @@ def render(user: dict):
                 if st.button("Save", key=f"sp_save_{u['id']}", use_container_width=True):
                     set_user_startup_points(u["id"], int(new_pts))
                     st.success(f"Startup points for {u['username']} set to {int(new_pts)}")
-                    st.rerun()

@@ -149,7 +149,71 @@ def render(user: dict):
     st.plotly_chart(fig_line, use_container_width=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Chart 2 — Outcome dot grid (users × matches)
+    # Chart 2 — Rank Race
+    # ══════════════════════════════════════════════════════════════════════════
+    st.subheader("Rank Race")
+    st.caption("Position after each completed match — #1 is leading.")
+
+    rank_history = {u: [] for u in all_users}
+    for mi in range(len(active_matches)):
+        cum = {
+            uname: sum(
+                (pts_matrix[uname].get(active_matches[j]["id"]) or 0)
+                for j in range(mi + 1)
+            )
+            for uname in all_users
+        }
+        sorted_names = sorted(all_users, key=lambda u: -cum[u])
+        for rank_pos, uname in enumerate(sorted_names, 1):
+            rank_history[uname].append(rank_pos)
+
+    fig_rank = go.Figure()
+    n_users = len(all_users)
+    for i, uname in enumerate(all_users):
+        color = _PALETTE[i % len(_PALETTE)]
+        short = short_names[uname]
+        fig_rank.add_trace(go.Scatter(
+            x=match_labels,
+            y=rank_history[uname],
+            mode="lines+markers",
+            name=short,
+            line=dict(color=color, width=2),
+            marker=dict(size=5, color=color),
+            hovertemplate=f"<b>{short}</b><br>After %{{x}}: <b>#%{{y}}</b><extra></extra>",
+        ))
+
+    fig_rank.update_layout(
+        paper_bgcolor="#0a0a0a",
+        plot_bgcolor="#0a0a0a",
+        font=dict(color="#f0f0f0", size=11),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom", y=1.02,
+            xanchor="center", x=0.5,
+            font=dict(size=10),
+            bgcolor="rgba(0,0,0,0)",
+            itemwidth=40,
+        ),
+        xaxis=dict(
+            tickangle=-40, tickfont=dict(size=9),
+            gridcolor="#1a1a1a", linecolor="#333",
+        ),
+        yaxis=dict(
+            title="Rank",
+            autorange="reversed",
+            tickmode="linear", tick0=1, dtick=1,
+            range=[n_users + 0.5, 0.5],
+            gridcolor="#1a1a1a", linecolor="#333",
+            zeroline=False,
+        ),
+        height=400,
+        margin=dict(l=10, r=10, t=80, b=80),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig_rank, use_container_width=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Chart 3 — Outcome dot grid (users × matches)
     # ══════════════════════════════════════════════════════════════════════════
     st.subheader("Prediction Outcomes Grid")
     st.caption("🟡 Exact &nbsp; 🟢 Correct winner &nbsp; 🔴 Wrong &nbsp; ⬛ No pick")
