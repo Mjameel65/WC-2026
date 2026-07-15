@@ -241,21 +241,43 @@ with st.sidebar:
 tab_labels = [f"{icon} {name}" for name, icon in NAV.items()]
 tabs = st.tabs(tab_labels)
 
-page_renderers = {
-    "Home":              pg_home.render,
-    "Schedule":          pg_schedule.render,
-    "Groups":            pg_groups.render,
-    "Results":           pg_results.render,
-    "Predict":           pg_predict.render,
-    "Users Predictions": pg_dashboard.render,
-    "Scores":            pg_scores.render,
-    "Leaderboard":       pg_leaderboard.render,
-    "Analysis":          pg_analysis.render,
+# Each tab is a fragment — only that tab reruns when the user interacts with it,
+# instead of the entire page reflashing on every button click or form submit.
+@st.fragment
+def _frag_home():        pg_home.render(st.session_state["user"])
+@st.fragment
+def _frag_schedule():    pg_schedule.render(st.session_state["user"])
+@st.fragment
+def _frag_groups():      pg_groups.render(st.session_state["user"])
+@st.fragment
+def _frag_results():     pg_results.render(st.session_state["user"])
+@st.fragment
+def _frag_predict():     pg_predict.render(st.session_state["user"])
+@st.fragment
+def _frag_dashboard():   pg_dashboard.render(st.session_state["user"])
+@st.fragment
+def _frag_scores():      pg_scores.render(st.session_state["user"])
+@st.fragment
+def _frag_leaderboard(): pg_leaderboard.render(st.session_state["user"])
+@st.fragment
+def _frag_analysis():    pg_analysis.render(st.session_state["user"])
+@st.fragment
+def _frag_admin():       pg_admin.render(st.session_state["user"])
+
+_frags = {
+    "Home":              _frag_home,
+    "Schedule":          _frag_schedule,
+    "Groups":            _frag_groups,
+    "Results":           _frag_results,
+    "Predict":           _frag_predict,
+    "Users Predictions": _frag_dashboard,
+    "Scores":            _frag_scores,
+    "Leaderboard":       _frag_leaderboard,
+    "Analysis":          _frag_analysis,
+    "Admin":             _frag_admin,
 }
-if is_admin:
-    page_renderers["Admin"] = pg_admin.render
 
 for tab, page_name in zip(tabs, NAV.keys()):
     with tab:
         if not st.session_state.get("show_profile", False):
-            page_renderers[page_name](user)
+            _frags[page_name]()
